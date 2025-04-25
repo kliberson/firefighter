@@ -1,0 +1,421 @@
+package sniffer
+
+import (
+	"bytes"
+    "encoding/binary"
+    "fmt"
+    "net"
+    "strings"
+
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
+	"github.com/google/gopacket/pcap"
+)
+
+func Start(interfaceName string) error {
+	handle, err := pcap.OpenLive(interfaceName, 1600, true, pcap.BlockForever)
+	if err != nil {
+		return fmt.Errorf("nie mogę otworzyć interfejsu: %v", err)
+	}
+	defer handle.Close()
+
+	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
+
+	for packet := range packetSource.Packets() {
+		printPacketInfo(packet)
+	}
+
+	return nil
+}
+
+func printPacketInfo(packet gopacket.Packet) {
+    // Pobierz timestamp i rozmiar pakietu
+    timestamp := packet.Metadata().Timestamp.Format("15:04:05.000000")
+    packetLength := packet.Metadata().Length
+    
+    fmt.Printf("\n[%s] --- Pakiet #%d (%d bajtów) ---\n", timestamp, packetCounter, packetLength)
+    packetCounter++
+    
+    // Warstwa sieciowa (IPv4, IPv6, ARP, itp.)
+    networkLayer := packet.NetworkLayer()
+    if networkLayer != nil {
+        switch n := networkLayer.(type) {
+        case *layers.IPv4:
+            fmt.Printf("IPv4: %s → %s (Protocol: %s, TTL: %d, ID: %d)\n", 
+                n.SrcIP, n.DstIP, n.Protocol, n.TTL, n.Id)
+            
+            // Szczegóły fragmentacji
+            if n.Flags&layers.IPv4DontFragment != 0 {
+                fmt.Print("  Flagi: Don't Fragment")
+            }
+            if n.Flags&layers.IPv4MoreFragments != 0 {
+                fmt.Print("  Flagi: More Fragments")
+            }
+            if n.FragOffset > 0 {
+                fmt.Printf("  Fragment Offset: %d\n", n.FragOffset)
+            }
+            
+        case *layers.IPv6:
+            fmt.Printf("IPv6: %s → %s (NextHeader: %s, HopLimit: %d)\n", 
+                n.SrcIP, n.DstIP, n.NextHeader, n.HopLimit)
+                
+        if arpLayer := packet.Layer(layers.LayerTypeARP); arpLayer != nil {
+            arp := arpLayer.(*layers.ARP)
+            operation := "Unknown"
+            if arp.Operation == layers.ARPRequest {
+                operation = "Request"
+            } else if arp.Operation == layers.ARPReply {
+                operation = "Reply"
+            }
+            fmt.Printf("ARP: %s [%s] → %s [%s] (Operation: %s)\n", 
+                net.HardwareAddr(arp.SourceHwAddress), net.IP(arp.SourceProtAddress),
+                net.HardwareAddr(arp.DstHwAddress), net.IP(arp.DstProtAddress), 
+                operation)
+        }
+                
+        default:
+            fmt.Printf("Warstwa sieciowa: %s\n", networkLayer.LayerType())
+        }
+    }
+    
+    // Warstwa transportowa (TCP, UDP, SCTP, itp.)
+    transportLayer := packet.TransportLayer()
+    if transportLayer != nil {
+        switch t := transportLayer.(type) {
+        case *layers.TCP:
+            fmt.Printf("TCP: %s → %s (Seq: %d, Ack: %d, Win: %d)\n", 
+                t.SrcPort, t.DstPort, t.Seq, t.Ack, t.Window)
+            
+            // Flagi TCP
+            var flags []string
+            if t.FIN { flags = append(flags, "FIN") }
+            if t.SYN { flags = append(flags, "SYN") }
+            if t.RST { flags = append(flags, "RST") }
+            if t.PSH { flags = append(flags, "PSH") }
+            if t.ACK { flags = append(flags, "ACK") }
+            if t.URG { flags = append(flags, "URG") }
+            if t.ECE { flags = append(flags, "ECE") }
+            if t.CWR { flags = append(flags, "CWR") }
+            if t.NS  { flags = append(flags, "NS")  }
+            
+            if len(flags) > 0 {
+                fmt.Printf("  Flagi: %s\n", strings.Join(flags, ", "))
+            }
+            
+            // Opcje TCP
+            if len(t.Options) > 0 {
+                fmt.Print("  Opcje:")
+                for _, opt := range t.Options {
+                    switch opt.OptionType {
+                    case layers.TCPOptionKindMSS:
+                        fmt.Printf(" MSS:%d", binary.BigEndian.Uint16(opt.OptionData))
+                    case layers.TCPOptionKindWindowScale:
+                        fmt.Printf(" WS:%d", opt.OptionData[0])
+                    case layers.TCPOptionKindSACKPermitted:
+                        fmt.Print(" SACK-Permitted")
+                    case layers.TCPOptionKindTimestamps:
+                        if len(opt.OptionData) >= 8 {
+                            ts := binary.BigEndian.Uint32(opt.OptionData[0:4])
+                            tsecr := binary.BigEndian.Uint32(opt.OptionData[4:8])
+                            fmt.Printf(" TS:%d TSEcr:%d", ts, tsecr)
+                        }
+                    default:
+                        fmt.Printf(" %d", opt.OptionType)
+                    }
+                }
+                fmt.Println()
+            }
+            
+        case *layers.UDP:
+            fmt.Printf("UDP: %s → %s (Len: %d)\n", 
+                t.SrcPort, t.DstPort, t.Length)
+                
+        case *layers.SCTP:
+            fmt.Printf("SCTP: %d → %d (Tag: %d)\n", 
+                t.SrcPort, t.DstPort, t.VerificationTag)
+                
+        default:
+            fmt.Printf("Warstwa transportowa: %s\n", transportLayer.LayerType())
+        }
+        
+        // Identyfikacja znanych portów usług
+        identifyService(transportLayer)
+    }
+    
+    // Protokoły kontrolne (ICMP, ICMPv6, IGMP)
+    if icmpLayer := packet.Layer(layers.LayerTypeICMPv4); icmpLayer != nil {
+        icmp := icmpLayer.(*layers.ICMPv4)
+        fmt.Printf("ICMPv4: Type: %d (", icmp.TypeCode >> 8)
+        
+        // Dostarczamy opis typu ICMP
+        switch icmp.TypeCode >> 8 {
+        case 0:
+            fmt.Print("Echo Reply")
+        case 3:
+            fmt.Print("Destination Unreachable")
+        case 8:
+            fmt.Print("Echo Request")
+        case 11:
+            fmt.Print("Time Exceeded")
+        default:
+            fmt.Printf("Type %d", icmp.TypeCode >> 8)
+        }
+        
+        fmt.Printf("), Code: %d, Checksum: 0x%04x\n", 
+            icmp.TypeCode & 0xFF, icmp.Checksum)
+            
+        // Dodatkowe informacje specyficzne dla typu
+        if icmp.TypeCode >> 8 == 8 || icmp.TypeCode >> 8 == 0 { // Echo Request/Reply
+            fmt.Printf("  Identifier: %d, Sequence: %d\n", 
+                icmp.Id, icmp.Seq)
+        }
+    }
+    
+    if icmpv6Layer := packet.Layer(layers.LayerTypeICMPv6); icmpv6Layer != nil {
+        icmp := icmpv6Layer.(*layers.ICMPv6)
+        fmt.Printf("ICMPv6: Type: %d (", icmp.TypeCode.Type())
+        
+        // Dostarczamy opis typu ICMPv6
+        switch icmp.TypeCode.Type() {
+        case 1:
+            fmt.Print("Destination Unreachable")
+        case 128:
+            fmt.Print("Echo Request")
+        case 129:
+            fmt.Print("Echo Reply")
+        case 133:
+            fmt.Print("Router Solicitation")
+        case 134:
+            fmt.Print("Router Advertisement")
+        case 135:
+            fmt.Print("Neighbor Solicitation")
+        case 136:
+            fmt.Print("Neighbor Advertisement")
+        default:
+            fmt.Printf("Type %d", icmp.TypeCode.Type())
+        }
+        
+        fmt.Printf("), Code: %d\n", icmp.TypeCode.Code())
+    }
+    
+    if igmpLayer := packet.Layer(layers.LayerTypeIGMP); igmpLayer != nil {
+        igmp := igmpLayer.(*layers.IGMP)
+        fmt.Printf("IGMP: Type: %d, MaxResponseTime: %v, Checksum: 0x%04x, GroupAddress: %s\n", 
+            igmp.Type, igmp.MaxResponseTime, igmp.Checksum, igmp.GroupAddress)
+    }
+    
+    // Protokoły aplikacyjne (DNS, HTTP, itp.)
+    if dnsLayer := packet.Layer(layers.LayerTypeDNS); dnsLayer != nil {
+        dns := dnsLayer.(*layers.DNS)
+        fmt.Printf("DNS: ID: %d, QR: %v, OpCode: %d\n", 
+            dns.ID, dns.QR, dns.OpCode)
+            
+        if len(dns.Questions) > 0 {
+            fmt.Printf("  Zapytania (%d):\n", len(dns.Questions))
+            for i, q := range dns.Questions {
+                fmt.Printf("    %d. %s (Type: %d, Class: %d)\n", 
+                    i+1, string(q.Name), q.Type, q.Class)
+            }
+        }
+        
+        if len(dns.Answers) > 0 {
+            fmt.Printf("  Odpowiedzi (%d):\n", len(dns.Answers))
+            for i, a := range dns.Answers {
+                fmt.Printf("    %d. %s -> ", i+1, string(a.Name))
+                
+                switch a.Type {
+                case layers.DNSTypeA:
+                    fmt.Printf("A: %s\n", a.IP)
+                case layers.DNSTypeAAAA:
+                    fmt.Printf("AAAA: %s\n", a.IP)
+                case layers.DNSTypeCNAME:
+                    fmt.Printf("CNAME: %s\n", string(a.CNAME))
+                case layers.DNSTypeMX:
+                    fmt.Printf("MX: %s (Pref: %d)\n", string(a.MX.Name), a.MX.Preference)
+                case layers.DNSTypeNS:
+                    fmt.Printf("NS: %s\n", string(a.NS))
+                case layers.DNSTypeTXT:
+                    fmt.Printf("TXT: %s\n", string(a.TXT[0]))
+                default:
+                    fmt.Printf("Type %d\n", a.Type)
+                }
+            }
+        }
+    }
+    
+    // Analiza warstwy aplikacji i wyświetlanie danych
+    appLayer := packet.ApplicationLayer()
+    if appLayer != nil {
+        payload := appLayer.Payload()
+        payloadLen := len(payload)
+        
+        if payloadLen > 0 {
+            // Próba identyfikacji protokołu aplikacyjnego
+            if transportLayer != nil {
+                switch t := transportLayer.(type) {
+                case *layers.TCP:
+                    port := uint16(t.DstPort)
+                    if uint16(t.SrcPort) == 80 || uint16(t.SrcPort) == 8080 {
+                        port = uint16(t.SrcPort)
+                    }
+                    
+                    // Sprawdź znane protokoły po porcie
+                    switch port {
+                    case 80, 8080, 443:
+                        if bytes.HasPrefix(payload, []byte("HTTP/")) || 
+                           bytes.HasPrefix(payload, []byte("GET ")) ||
+                           bytes.HasPrefix(payload, []byte("POST ")) {
+                            fmt.Println("HTTP: Wykryto ruch HTTP")
+                            displayHTTPInfo(payload)
+                        }
+                    case 25, 587:
+                        if bytes.HasPrefix(payload, []byte("EHLO")) ||
+                           bytes.HasPrefix(payload, []byte("HELO")) {
+                            fmt.Println("SMTP: Wykryto ruch SMTP")
+                        }
+                    case 110:
+                        if bytes.HasPrefix(payload, []byte("+OK")) {
+                            fmt.Println("POP3: Wykryto ruch POP3")
+                        }
+                    case 143:
+                        if bytes.HasPrefix(payload, []byte("* OK")) {
+                            fmt.Println("IMAP: Wykryto ruch IMAP")
+                        }
+                    }
+                }
+            }
+            
+            // Wyświetl fragment danych aplikacji
+            displayPayloadSample(payload)
+        }
+    }
+    
+    // Dodaj linię rozdzielającą dla czytelności
+    fmt.Println(strings.Repeat("-", 50))
+}
+
+// Zmienna globalna do zliczania pakietów
+var packetCounter int = 1
+
+// Funkcja do identyfikacji znanych usług po portach
+func identifyService(layer gopacket.TransportLayer) {
+    var srcPort, dstPort uint16
+    
+    switch t := layer.(type) {
+    case *layers.TCP:
+        srcPort = uint16(t.SrcPort)
+        dstPort = uint16(t.DstPort)
+    case *layers.UDP:
+        srcPort = uint16(t.SrcPort)
+        dstPort = uint16(t.DstPort)
+    default:
+        return
+    }
+    
+    // Definiujemy mapę znanych portów
+    knownPorts := map[uint16]string{
+        20: "FTP-Data", 21: "FTP", 22: "SSH", 23: "Telnet",
+        25: "SMTP", 53: "DNS", 67: "DHCP-Server", 68: "DHCP-Client",
+        69: "TFTP", 80: "HTTP", 110: "POP3", 123: "NTP",
+        137: "NetBIOS-NS", 138: "NetBIOS-DGM", 139: "NetBIOS-SSN", 143: "IMAP",
+        161: "SNMP", 162: "SNMP-Trap", 389: "LDAP", 443: "HTTPS",
+        445: "SMB", 465: "SMTPS", 514: "Syslog", 587: "SMTP-Submission",
+        636: "LDAPS", 993: "IMAPS", 995: "POP3S", 1080: "SOCKS",
+        1194: "OpenVPN", 1433: "MSSQL", 1521: "Oracle", 1723: "PPTP",
+        1812: "RADIUS", 3306: "MySQL", 3389: "RDP", 5060: "SIP",
+        5222: "XMPP", 5432: "PostgreSQL", 5900: "VNC", 6379: "Redis",
+        8080: "HTTP-Alt", 8443: "HTTPS-Alt", 9418: "Git",
+    }
+    
+    // Wyświetl znane usługi
+    srcService, srcKnown := knownPorts[srcPort]
+    dstService, dstKnown := knownPorts[dstPort]
+    
+    fmt.Print("  Usługi: ")
+    if srcKnown {
+        fmt.Printf("Port %d: %s, ", srcPort, srcService)
+    }
+    if dstKnown {
+        fmt.Printf("Port %d: %s", dstPort, dstService)
+    }
+    if srcKnown || dstKnown {
+        fmt.Println()
+    } else {
+        fmt.Println("Nierozpoznane")
+    }
+}
+
+// Funkcja do wyświetlania fragmentu danych aplikacji
+func displayPayloadSample(payload []byte) {
+    fmt.Printf("  Dane aplikacji (%d bajtów):\n", len(payload))
+    
+    // Określ ile bajtów wyświetlić
+    displayLen := 64
+    if len(payload) < displayLen {
+        displayLen = len(payload)
+    }
+    
+    // Sprawdź czy dane są tekstowe
+    isText := true
+    for i := 0; i < displayLen; i++ {
+        if payload[i] < 32 || payload[i] > 126 {
+            if payload[i] != 10 && payload[i] != 13 { // z wyjątkiem CR/LF
+                isText = false
+                break
+            }
+        }
+    }
+    
+    // Wyświetl dane w odpowiednim formacie
+    if isText {
+        // Oczyszczamy dane z CR/LF dla czytelności
+        cleanText := strings.Replace(string(payload[:displayLen]), "\r", "", -1)
+        cleanText = strings.Replace(cleanText, "\n", "\\n ", -1)
+        
+        fmt.Printf("    ASCII: %s", cleanText)
+        if len(payload) > displayLen {
+            fmt.Print("...")
+        }
+        fmt.Println()
+    } else {
+        // Wyświetl dane w formacie hex
+        fmt.Print("    HEX: ")
+        for i := 0; i < displayLen; i++ {
+            fmt.Printf("%02x ", payload[i])
+            if i == 31 {
+                break // Limit do 32 bajtów dla hex
+            }
+        }
+        if len(payload) > 32 {
+            fmt.Print("...")
+        }
+        fmt.Println()
+    }
+}
+
+// Funkcja do analizy i wyświetlania podstawowych informacji HTTP
+func displayHTTPInfo(payload []byte) {
+    // Konwertuj na string dla łatwiejszej analizy
+    data := string(payload)
+    
+    // Znajdź pierwszą linię (linia statusu lub żądania)
+    lines := strings.Split(data, "\n")
+    if len(lines) > 0 {
+        fmt.Printf("  HTTP: %s\n", strings.TrimSpace(lines[0]))
+        
+        // Szukaj ważnych nagłówków
+        for i := 1; i < len(lines) && i < 10; i++ {
+            line := strings.TrimSpace(lines[i])
+            lowerLine := strings.ToLower(line)
+            
+            // Wyświetl tylko wybrane nagłówki
+            if strings.HasPrefix(lowerLine, "host:") ||
+               strings.HasPrefix(lowerLine, "user-agent:") ||
+               strings.HasPrefix(lowerLine, "content-type:") ||
+               strings.HasPrefix(lowerLine, "content-length:") ||
+               strings.HasPrefix(lowerLine, "location:") {
+                fmt.Printf("    %s\n", line)
+            }
+        }
+    }
+}
