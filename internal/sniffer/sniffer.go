@@ -2,6 +2,8 @@ package sniffer
 
 import (
 	"bytes"
+	"firefighter/internal/analyzer"
+	"firefighter/internal/packetdata"
 	"fmt"
 	"strings"
 
@@ -17,17 +19,32 @@ func Start(interfaceName string) error {
 	}
 	defer handle.Close()
 
+	// tymczasowe blokowanie ssh dla testów
+	if err := handle.SetBPFFilter("not port 22"); err != nil {
+		return fmt.Errorf("błąd ustawiania filtra BPF: %w", err)
+	}
+
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 
 	for packet := range packetSource.Packets() {
-		printPacketInfo(packet)
-	}
+		info := ExtractPacketInfo(packet)
+		if info != nil {
+			// Logowanie do testów
+			fmt.Printf("[%s] %s:%s → %s:%s (%s)\n",
+				info.Timestamp.Format("15:04:05"),
+				info.SrcIP, info.SrcPort,
+				info.DstIP, info.DstPort,
+				info.Protocol,
+			)
 
+			// Przekazanie do analizera
+			analyzer.AnalyzePacket(info)
+		}
+	}
 	return nil
 }
 
-func printPacketInfo(packet gopacket.Packet) {
-	timestamp := packet.Metadata().Timestamp.Format("15:04:05.000")
+func ExtractPacketInfo(packet gopacket.Packet) *packetdata.PacketInfo {
 	ethernetLayer := packet.Layer(layers.LayerTypeEthernet)
 	ipLayer := packet.Layer(layers.LayerTypeIPv4)
 	transportLayer := packet.TransportLayer()
@@ -98,32 +115,40 @@ func printPacketInfo(packet gopacket.Packet) {
 				protocol = "Other"
 			}
 
-			// Krótki podgląd (tekstowy, jeśli możliwe)
-			maxLen := 32
-			previewLen := len(payload)
-			if previewLen > maxLen {
-				previewLen = maxLen
-			}
-			isText := true
-			for i := 0; i < previewLen; i++ {
-				if payload[i] < 32 || payload[i] > 126 {
-					isText = false
-					break
-				}
-			}
-			if isText {
-				payloadPreview = string(payload[:previewLen])
-			} else {
-				payloadPreview = fmt.Sprintf("%x", payload[:previewLen])
-			}
+			// // Krótki podgląd (tekstowy, jeśli możliwe)
+			// maxLen := 32
+			// previewLen := min(len(payload), maxLen)
+			// isText := true
+			// for i := range previewLen {
+			// 	if payload[i] < 32 || payload[i] > 126 {
+			// 		isText = false
+			// 		break
+			// 	}
+			// }
+			// if isText {
+			// 	payloadPreview = string(payload[:previewLen])
+			// } else {
+			// 	payloadPreview = fmt.Sprintf("%x", payload[:previewLen])
+			// }
 		}
+		// Logowanie danych
+		fmt.Printf("MAC: %s → %s | IP: %s → %s | %s → %s\n", srcMAC, dstMAC, srcIP, dstIP, srcPort, dstPort)
+		fmt.Println(strings.Repeat("-", 60))
 	}
 
-	// Logowanie danych
-	fmt.Printf("[%s] MAC: %s → %s | IP: %s → %s | Porty: %s → %s\n", timestamp, srcMAC, dstMAC, srcIP, dstIP, srcPort, dstPort)
-	fmt.Printf("         TTL: %d, IP-ID: %d, IP-Len: %d, TCP-Flags: %v\n", ttl, ipID, ipLen, tcpFlags)
-	if protocol != "" {
-		fmt.Printf("         Aplikacja: %s, Dane: %s\n", protocol, payloadPreview)
+	return &packetdata.PacketInfo{
+		Timestamp:      packet.Metadata().Timestamp,
+		SrcMAC:         srcMAC,
+		DstMAC:         dstMAC,
+		SrcIP:          srcIP,
+		DstIP:          dstIP,
+		SrcPort:        srcPort,
+		DstPort:        dstPort,
+		TTL:            ttl,
+		IPID:           ipID,
+		IPLen:          ipLen,
+		TCPFlags:       tcpFlags,
+		Protocol:       protocol,
+		PayloadPreview: payloadPreview,
 	}
-	fmt.Println(strings.Repeat("-", 60))
 }

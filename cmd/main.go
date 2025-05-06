@@ -2,10 +2,10 @@ package main
 
 import (
 	"firefighter/internal/sniffer"
-	"log"
+	"fmt"
 )
 
 func main() {
 	sniffer.Start("enp0s3")
-	log.Println("Firefighter is running...")
+	fmt.Println("Firefighter is running...")
 }

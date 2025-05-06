@@ -1,33 +1,3 @@
-package sniffer
-
-import (
-	"bytes"
-    "encoding/binary"
-    "fmt"
-    "net"
-    "strings"
-
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
-	"github.com/google/gopacket/pcap"
-)
-
-func Start(interfaceName string) error {
-	handle, err := pcap.OpenLive(interfaceName, 1600, true, pcap.BlockForever)
-	if err != nil {
-		return fmt.Errorf("nie mogę otworzyć interfejsu: %v", err)
-	}
-	defer handle.Close()
-
-	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
-
-	for packet := range packetSource.Packets() {
-		printPacketInfo(packet)
-	}
-
-	return nil
-}
-
 func printPacketInfo(packet gopacket.Packet) {
     // Pobierz timestamp i rozmiar pakietu
     timestamp := packet.Metadata().Timestamp.Format("15:04:05.000000")
