@@ -1,0 +1,3 @@
+package suricata
+
+func Dummy() {}
