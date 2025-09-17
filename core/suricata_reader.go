@@ -7,30 +7,15 @@ import (
 	"log"
 	"net"
 	"os"
+	"strings"
 )
-
-type Alert struct {
-	Timestamp string `json:"timestamp"`
-	SrcIP     string `json:"src_ip"`
-	SrcPort   int    `json:"src_port"`
-	DstIP     string `json:"dest_ip"`
-	DstPort   int    `json:"dest_port"`
-	Proto     string `json:"proto"`
-	Alert     struct {
-		Signature string `json:"signature"`
-		Category  string `json:"category"`
-		Severity  int    `json:"severity"`
-	} `json:"alert"`
-}
 
 const SuricataSocketPath = "/var/run/suricata/eve.sock"
 
-// StartServer tworzy Unix socket server i czeka na połączenie od Suricata
 func StartServer(socketPath string, out chan<- Alert) error {
-	// Usuń socket jeśli już istnieje
+	// Usuń stary socket
 	os.Remove(socketPath)
 
-	// Utwórz Unix socket listener (SERVER)
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		return fmt.Errorf("nie mogę utworzyć Unix socket: %w", err)
@@ -38,57 +23,63 @@ func StartServer(socketPath string, out chan<- Alert) error {
 	defer listener.Close()
 	defer os.Remove(socketPath)
 
-	// Ustaw uprawnienia żeby Suricata mogła się połączyć
-	err = os.Chmod(socketPath, 0666)
-	if err != nil {
+	if err := os.Chmod(socketPath, 0666); err != nil {
 		log.Printf("Ostrzeżenie: Nie można ustawić uprawnień socketu: %v", err)
 	}
 
 	fmt.Printf("[Suricata] Serwer nasłuchuje na %s\n", socketPath)
-	fmt.Println("[Suricata] Czekam na połączenie od Suricata...")
 
 	for {
-		// Akceptuj połączenie od Suricata
 		conn, err := listener.Accept()
 		if err != nil {
 			return fmt.Errorf("błąd akceptowania połączenia: %w", err)
 		}
-
 		fmt.Println("[Suricata] Suricata połączona!")
-
-		// Obsługuj połączenie w osobnej goroutine
-		go handleSuricataConnection(conn, out)
+		go handleConnection(conn, out)
 	}
 }
 
-func handleSuricataConnection(conn net.Conn, out chan<- Alert) {
+// Parsing alerts and sending to unix socket channel
+func handleConnection(conn net.Conn, out chan<- Alert) {
 	defer conn.Close()
-	defer fmt.Println("[Suricata] Suricata rozłączona")
 
 	scanner := bufio.NewScanner(conn)
 	alertCount := 0
 
 	for scanner.Scan() {
-		line := scanner.Bytes()
-		var alert Alert
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
 
-		if err := json.Unmarshal(line, &alert); err != nil {
-			// Jeśli to nie jest alert (np. log HTTP, DNS itp.), pomijamy
+		var alert Alert
+		if err := json.Unmarshal([]byte(line), &alert); err != nil {
+			log.Printf("[Suricata] Błąd parsowania JSON: %v\nJSON: %s", err, line)
+			continue
+		}
+
+		// filtering SID == 0
+		if alert.Alert.SignatureID == 0 {
 			continue
 		}
 
 		alertCount++
-		fmt.Printf("[Suricata] Alert #%d: %s\n", alertCount, alert.Alert.Signature)
-
-		// Wysyłamy do kanału, żeby inne części systemu mogły to odebrać
-		select {
-		case out <- alert:
-		default:
-			log.Println("[Suricata] Ostrzeżenie: Kanał pełny, pomijam alert")
-		}
+		out <- alert
 	}
-
 	if err := scanner.Err(); err != nil {
-		log.Printf("[Suricata] Błąd czytania z socketu: %v", err)
+		log.Printf("[Suricata] Błąd czytania ze socketu: %v", err)
 	}
+}
+
+// Writing alert to console
+func HandleAlert(alert Alert) {
+	text := alert.Alert.Signature
+	if text == "" {
+		text = fmt.Sprintf("%s -> %s:%d", alert.SrcIP, alert.DstIP, alert.DstPort)
+	}
+
+	fmt.Printf("[ALERT] %s (SID: %d)\n", text, alert.Alert.SignatureID)
+	fmt.Printf("  └─ %s:%d -> %s:%d (%s)\n",
+		alert.SrcIP, alert.SrcPort, alert.DstIP, alert.DstPort, alert.Proto)
+	fmt.Println(strings.Repeat("-", 50))
 }

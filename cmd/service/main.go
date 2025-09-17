@@ -5,29 +5,34 @@ import (
 	"log"
 	"os/exec"
 
-	suricata "firefighter/core" // lub twoja ścieżka
+	suricata "firefighter/core"
 )
 
 func main() {
 
-	suricataCmd := exec.Command("sudo", "suricata", "-c", "/etc/suricata/suricata.yaml", "-i", "enp0s3")
+	suricataCmd := exec.Command("sudo", "suricata",
+		"-c", "/etc/suricata/suricata.yaml",
+		"-i", "enp0s3",
+		"-v")
+
 	if err := suricataCmd.Start(); err != nil {
 		log.Fatal("Nie można uruchomić Suricata:", err)
 	}
 	defer suricataCmd.Process.Kill()
 
+	// Channel for receiving alerts
 	alertChan := make(chan suricata.Alert, 100)
 
-	// Uruchom serwer w goroutine
+	// Starting unix socket server
 	go func() {
 		if err := suricata.StartServer(suricata.SuricataSocketPath, alertChan); err != nil {
 			log.Fatal(err)
 		}
 	}()
 
-	// Odbieraj alerty
+	fmt.Println("🔥 Firefighter uruchomiony! Oczekuję na alerty...")
+
 	for alert := range alertChan {
-		fmt.Printf("🚨 ALERT: %s -> %s:%d | %s\n",
-			alert.SrcIP, alert.DstIP, alert.DstPort, alert.Alert.Signature)
+		suricata.HandleAlert(alert)
 	}
 }

@@ -1,3 +1,3 @@
 package server
 
-func Jebackurwa() {}
+func TEST1() {}

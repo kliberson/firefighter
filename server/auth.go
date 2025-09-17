@@ -1,3 +1,3 @@
 package server
 
-func Popierdolimnie() {}
+func TEST2() {}

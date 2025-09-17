@@ -1,3 +1,3 @@
 package server
 
-func Chujwie() {}
+func Test3() {}
