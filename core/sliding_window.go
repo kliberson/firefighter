@@ -1,78 +1,40 @@
 package suricata
 
 import (
-	"sync"
+	"fmt"
 	"time"
 )
 
-// SlidingWindow przechowuje alerty w oknie czasowym
-type SlidingWindow struct {
-	alerts    []time.Time // Lista czasów alertów
-	windowSec int         // Rozmiar okna w sekundach
-	threshold int         // Próg alertów
-	mutex     sync.Mutex  // Zabezpieczenie przed race conditions
-}
-
-// NewSlidingWindow tworzy nowe okno
-func NewSlidingWindow(windowSeconds, threshold int) *SlidingWindow {
+func NewSlidingWindow(duration time.Duration) *SlidingWindow {
 	return &SlidingWindow{
-		alerts:    make([]time.Time, 0),
-		windowSec: windowSeconds,
-		threshold: threshold,
+		Duration: duration,
+		Events:   make([]Alert, 0),
 	}
 }
 
-// AddAlert dodaje nowy alert do okna
-func (sw *SlidingWindow) AddAlert() bool {
-	sw.mutex.Lock()
-	defer sw.mutex.Unlock()
+// Dodanie alertu do okna
+func (w *SlidingWindow) Add(alert Alert) {
+	// dodajemy nowy alert
+	w.Events = append(w.Events, alert)
 
-	now := time.Now()
+	// cutoff = granica czasu (np. 10 sekund wstecz)
+	cutoff := time.Now().Add(-w.Duration)
 
-	// 1. Dodaj nowy alert
-	sw.alerts = append(sw.alerts, now)
-
-	// 2. Usuń stare alerty (starsze niż okno czasowe)
-	sw.removeOldAlerts(now)
-
-	// 3. Sprawdź czy przekroczono próg
-	return len(sw.alerts) >= sw.threshold
-}
-
-// removeOldAlerts usuwa alerty starsze niż okno czasowe
-func (sw *SlidingWindow) removeOldAlerts(currentTime time.Time) {
-	cutoffTime := currentTime.Add(-time.Duration(sw.windowSec) * time.Second)
-
-	// Znajdź pierwszy alert który jest wystarczająco nowy
-	validIndex := 0
-	for i, alertTime := range sw.alerts {
-		if alertTime.After(cutoffTime) {
-			validIndex = i
-			break
+	filtered := make([]Alert, 0)
+	for _, e := range w.Events {
+		if e.ParsedTime.After(cutoff) {
+			filtered = append(filtered, e)
 		}
-		validIndex = len(sw.alerts) // Wszystkie są stare
 	}
-
-	// Usuń stare alerty
-	if validIndex > 0 {
-		sw.alerts = sw.alerts[validIndex:]
-	}
+	w.Events = filtered
 }
 
-// GetCount zwraca aktualną liczbę alertów w oknie
-func (sw *SlidingWindow) GetCount() int {
-	sw.mutex.Lock()
-	defer sw.mutex.Unlock()
-
-	// Usuń stare alerty przed zwróceniem liczby
-	sw.removeOldAlerts(time.Now())
-	return len(sw.alerts)
-}
-
-// Clear czyści wszystkie alerty
-func (sw *SlidingWindow) Clear() {
-	sw.mutex.Lock()
-	defer sw.mutex.Unlock()
-
-	sw.alerts = sw.alerts[:0] // Wyczyść slice
+// DEBUG
+func (w *SlidingWindow) Print() {
+	fmt.Println("Sliding window zawiera", len(w.Events), "alertów:")
+	for i, e := range w.Events {
+		fmt.Printf("  %d. %s -> %s:%d (%s)\n",
+			i+1, e.SrcIP, e.DstIP, e.DstPort, e.Alert.Signature)
+	}
+	fmt.Println("--------------------------------")
 }

@@ -1,5 +1,7 @@
 package suricata
 
+import "time"
+
 type Alert struct {
 	Timestamp string `json:"timestamp"`
 	EventType string `json:"event_type"`
@@ -14,4 +16,12 @@ type Alert struct {
 		Severity    int    `json:"severity"`
 		SignatureID int    `json:"signature_id"`
 	} `json:"alert"`
+
+	ParsedTime time.Time `json:"-"`
+}
+
+// SlidingWindow przechowuje ostatnie alerty w określonym czasie
+type SlidingWindow struct {
+	Duration time.Duration
+	Events   []Alert
 }

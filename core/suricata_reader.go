@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"time"
 )
 
 const SuricataSocketPath = "/var/run/suricata/eve.sock"
@@ -56,6 +57,18 @@ func handleConnection(conn net.Conn, out chan<- Alert) {
 		if err := json.Unmarshal([]byte(line), &alert); err != nil {
 			log.Printf("[Suricata] Błąd parsowania JSON: %v\nJSON: %s", err, line)
 			continue
+		}
+
+		if alert.Timestamp != "" {
+			parsed, err := time.Parse(time.RFC3339Nano, alert.Timestamp)
+			if err == nil {
+				alert.ParsedTime = parsed
+			} else {
+				// fallback: jeśli parsing się nie uda, ustaw teraz
+				alert.ParsedTime = time.Now()
+			}
+		} else {
+			alert.ParsedTime = time.Now()
 		}
 
 		// filtering SID == 0

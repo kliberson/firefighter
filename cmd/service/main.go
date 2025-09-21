@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os/exec"
+	"time"
 
 	suricata "firefighter/core"
 )
@@ -32,7 +33,14 @@ func main() {
 
 	fmt.Println("🔥 Firefighter uruchomiony! Oczekuję na alerty...")
 
+	window := suricata.NewSlidingWindow(25 * time.Second)
+
 	for alert := range alertChan {
 		suricata.HandleAlert(alert)
+
+		window.Add(alert)
+
+		// debug - pokaż co mamy w oknie
+		window.Print()
 	}
 }
