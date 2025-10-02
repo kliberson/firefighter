@@ -1,6 +1,9 @@
 package suricata
 
-import "time"
+import (
+	"container/list"
+	"time"
+)
 
 type Alert struct {
 	Timestamp string `json:"timestamp"`
@@ -20,8 +23,14 @@ type Alert struct {
 	ParsedTime time.Time `json:"-"`
 }
 
-// SlidingWindow przechowuje ostatnie alerty w określonym czasie
+// Last alerts from SlidingWindow
 type SlidingWindow struct {
 	Duration time.Duration
-	Events   []Alert
+	Events   *list.List
+}
+
+// Manages multiple SlidingWindows by source IP
+type WindowManager struct {
+	Duration time.Duration
+	Windows  map[string]*SlidingWindow
 }

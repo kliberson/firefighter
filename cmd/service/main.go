@@ -33,14 +33,17 @@ func main() {
 
 	fmt.Println("🔥 Firefighter uruchomiony! Oczekuję na alerty...")
 
-	window := suricata.NewSlidingWindow(25 * time.Second)
+	wm := suricata.NewWindowManager(25 * time.Second)
 
 	for alert := range alertChan {
+
 		suricata.HandleAlert(alert)
 
-		window.Add(alert)
+		wm.Add(alert)
 
-		// debug - pokaż co mamy w oknie
-		window.Print()
+		// debug
+		wm.PrintAll()
+
+		wm.AnalyzeAlerts()
 	}
 }
