@@ -1,6 +1,7 @@
 package api
 
 import (
+	suricata "firefighter/core"
 	"firefighter/data"
 	"strconv"
 
@@ -21,12 +22,23 @@ func getBlocked(db *data.DbManager) gin.HandlerFunc {
 func unblockIP(db *data.DbManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ip := c.Param("ip")
-		err := db.UnblockIP(ip)
-		if err != nil {
-			c.JSON(500, gin.H{"error": err.Error()})
+
+		// 1. Usuń z firewall
+		if err := suricata.UnblockIP(ip); err != nil {
+			c.JSON(500, gin.H{"error": "Failed to unblock in firewall: " + err.Error()})
 			return
 		}
-		c.JSON(200, gin.H{"message": "unblocked"})
+
+		// 2. Usuń z bazy
+		if err := db.UnblockIP(ip); err != nil {
+			c.JSON(500, gin.H{"error": "Failed to remove from database: " + err.Error()})
+			return
+		}
+
+		// 3. Powiadom klientów WebSocket
+		BroadcastUnblock(ip)
+
+		c.JSON(200, gin.H{"message": "IP unblocked successfully"})
 	}
 }
 
@@ -59,7 +71,7 @@ func getAlerts(db *data.DbManager) gin.HandlerFunc {
 
 func getWhitelisted(db *data.DbManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		ips, err := db.GetWhitelist()
+		ips, err := db.GetWhitelistDetails()
 		if err != nil {
 			c.JSON(500, gin.H{"error": "Failed to retrieve whitelisted IPs"})
 			return
@@ -70,18 +82,22 @@ func getWhitelisted(db *data.DbManager) gin.HandlerFunc {
 
 func addToWhitelist(db *data.DbManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		ip := c.Param("ip") // ← Weź IP z URL parametru
+
 		var req struct {
-			IP          string `json:"ip"`
-			Description string `json:"description"`
+			Description string `json:"description"` // Tylko description z body
 		}
+
 		if err := c.BindJSON(&req); err != nil {
-			c.JSON(400, gin.H{"error": "Invalid request"})
-			return
+			// JSON może być pusty (tylko IP w URL)
+			req.Description = ""
 		}
-		if err := db.AddToWhitelist(req.IP, req.Description); err != nil {
+
+		if err := db.AddToWhitelist(ip, req.Description); err != nil {
 			c.JSON(500, gin.H{"error": "Failed to add IP to whitelist"})
 			return
 		}
+
 		c.JSON(200, gin.H{"status": "IP added to whitelist"})
 	}
 }

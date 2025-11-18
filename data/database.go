@@ -12,15 +12,20 @@ type DbManager struct {
 }
 
 // DO SPRAWDZENIA CZY POTRZEBNE
-// type BlockedIPDetails struct {
-//     ID          int
-//     IP          string
-//     Reason      string
-//     BlockedAt   time.Time
-//     Status      string
-// }
+// EDIT: BYŁO POTRZEBNE
+type BlockedIPDetails struct {
+	IP        string `json:"ip"`
+	Reason    string `json:"reason"`
+	Timestamp int64  `json:"timestamp"`
+}
 
-// Struktura dla alertu (opcjonalnie)
+type WhitelistDetails struct {
+	IP          string `json:"ip"`
+	Description string `json:"description"`
+	AddedAt     int64  `json:"added_at"`
+}
+
+// Struktura dla alertu
 type AlertDetails struct {
 	ID        int
 	IP        string
@@ -83,27 +88,26 @@ func (s *DbManager) AddAlert(ip string, sid int, message string) error {
 	return err
 }
 
-func (s *DbManager) GetBlocked() ([]string, error) {
-	rows, err := s.db.Query(`SELECT ip FROM blocked_ips WHERE status='blocked'`)
+func (s *DbManager) GetBlocked() ([]BlockedIPDetails, error) {
+	rows, err := s.db.Query(`SELECT ip, timestamp, reason 
+							 FROM blocked_ips 
+							 WHERE status='blocked'
+							 ORDER BY timestamp DESC`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var ips []string
+	var ips []BlockedIPDetails
 	for rows.Next() {
-		var ip string
-		if err := rows.Scan(&ip); err != nil {
+		var ip BlockedIPDetails
+		if err := rows.Scan(&ip.IP, &ip.Timestamp, &ip.Reason); err != nil {
 			return nil, err
 		}
 		ips = append(ips, ip)
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return ips, nil
+	return ips, rows.Err()
 }
 
 func (s *DbManager) UnblockIP(ip string) error {
@@ -204,27 +208,23 @@ func (s *DbManager) IsWhitelisted(ip string) (bool, error) {
 	return count > 0, nil
 }
 
-func (s *DbManager) GetWhitelist() ([]string, error) {
-	rows, err := s.db.Query(`SELECT ip FROM whitelist`)
+func (s *DbManager) GetWhitelistDetails() ([]WhitelistDetails, error) {
+	rows, err := s.db.Query(`SELECT ip, description, added_at FROM whitelist ORDER BY added_at DESC`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var ips []string
+	var items []WhitelistDetails
 	for rows.Next() {
-		var ip string
-		if err := rows.Scan(&ip); err != nil {
+		var item WhitelistDetails
+		if err := rows.Scan(&item.IP, &item.Description, &item.AddedAt); err != nil {
 			return nil, err
 		}
-		ips = append(ips, ip)
+		items = append(items, item)
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return ips, nil
+	return items, rows.Err()
 }
 
 func (s *DbManager) Close() error {

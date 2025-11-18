@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"time"
 
+	api "firefighter/api"
 	suricata "firefighter/core"
 	"firefighter/data"
 )
@@ -18,6 +19,17 @@ func main() {
 		log.Fatal("Unable to open database:", err)
 	}
 	defer db.Close()
+
+	go api.StartHub()
+
+	//WSTĘPNIE SERVER HTTP
+	r := api.SetupRouter(db)
+
+	go func() {
+		if err := r.Run(":8080"); err != nil {
+			log.Fatal("Failed to run server:", err)
+		}
+	}()
 
 	// Suricata setup
 	suricataCmd := exec.Command("sudo", "suricata",
@@ -55,7 +67,7 @@ func main() {
 		wm.PrintAll()
 
 		// === ANALIZA I BLOKOWANIE ===
-		decisions := wm.AnalyzeAlerts()
+		decisions := wm.AnalyzeAlerts(db)
 
 		for _, decision := range decisions {
 			// 1. Sprawdź whitelist
@@ -64,7 +76,7 @@ func main() {
 				continue
 			}
 
-			// 2. Sprawdź czy już zablokowane
+			// 2. Sprawdź czy już zablokowany
 			if blocked, _ := db.IsBlocked(decision.IP); blocked {
 				fmt.Printf("⚠️  IP %s already blocked - skipping\n", decision.IP)
 				continue
@@ -81,6 +93,9 @@ func main() {
 				log.Printf("Database save failed for %s: %v", decision.IP, err)
 			} else {
 				fmt.Printf("BLOCKED: %s - %s\n", decision.IP, decision.Reason)
+
+				//  Wysyłanie alertu do klientów WebSocket
+				api.BroadcastBlock(decision.IP, decision.Reason)
 			}
 		}
 	}
