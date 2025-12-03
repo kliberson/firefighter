@@ -7,6 +7,7 @@ import (
 
 type Alert struct {
 	Timestamp string `json:"timestamp"`
+	FlowID    uint64 `json:"flow_id"`
 	EventType string `json:"event_type"`
 	SrcIP     string `json:"src_ip"`
 	SrcPort   int    `json:"src_port"`

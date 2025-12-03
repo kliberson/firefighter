@@ -38,3 +38,4 @@ __screenshots__/
 # Database
 data/*.db
 data/*.db-journal
+data/firefighter.db

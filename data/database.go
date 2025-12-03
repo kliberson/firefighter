@@ -11,12 +11,18 @@ type DbManager struct {
 	db *sql.DB
 }
 
-// DO SPRAWDZENIA CZY POTRZEBNE
-// EDIT: BYŁO POTRZEBNE
 type BlockedIPDetails struct {
-	IP        string `json:"ip"`
-	Reason    string `json:"reason"`
-	Timestamp int64  `json:"timestamp"`
+	IP            string `json:"ip"`
+	Reason        string `json:"reason"`
+	Score         int    `json:"score"`
+	AlertCount    int    `json:"alert_count"`
+	SeverityScore int    `json:"severity_score"`
+	UniquePorts   int    `json:"unique_ports"`
+	UniqueProtos  int    `json:"unique_protos"`
+	UniqueFlows   int    `json:"unique_flows"`
+	Categories    string `json:"categories"`
+	Details       string `json:"details"`
+	Timestamp     int64  `json:"timestamp"`
 }
 
 type WhitelistDetails struct {
@@ -25,7 +31,6 @@ type WhitelistDetails struct {
 	AddedAt     int64  `json:"added_at"`
 }
 
-// Struktura dla alertu
 type AlertDetails struct {
 	ID        int
 	IP        string
@@ -41,35 +46,43 @@ func New(path string) (*DbManager, error) {
 	}
 
 	_, err = db.Exec(`
-        CREATE TABLE IF NOT EXISTS blocked_ips (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ip TEXT NOT NULL,
-            reason TEXT,
-            timestamp INTEGER DEFAULT (strftime('%s', 'now')),
-            unblock_time INTEGER,
-            status TEXT DEFAULT 'blocked' CHECK(status IN ('blocked', 'unblocked'))
-        );
-        
-        CREATE TABLE IF NOT EXISTS alerts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ip TEXT NOT NULL,
-            sid INTEGER,
-            message TEXT,
-            timestamp INTEGER DEFAULT (strftime('%s', 'now'))
-        );
-        
-        CREATE TABLE IF NOT EXISTS whitelist (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ip TEXT NOT NULL UNIQUE,
-            description TEXT,
-            added_at INTEGER DEFAULT (strftime('%s', 'now'))
-        );
-        
-        CREATE INDEX IF NOT EXISTS idx_blocked_ips_ip ON blocked_ips(ip);
-        CREATE INDEX IF NOT EXISTS idx_blocked_ips_status ON blocked_ips(status);
-        CREATE INDEX IF NOT EXISTS idx_alerts_ip ON alerts(ip);
-        CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp);
-    `)
+		CREATE TABLE IF NOT EXISTS blocked_ips (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			ip TEXT NOT NULL,
+			reason TEXT,
+			score INTEGER DEFAULT 0,
+			alert_count INTEGER DEFAULT 0,
+			severity_score INTEGER DEFAULT 0,
+			unique_ports INTEGER DEFAULT 0,
+			unique_protos INTEGER DEFAULT 0,
+			unique_flows INTEGER DEFAULT 0,
+			categories TEXT,
+			details TEXT,
+			timestamp INTEGER DEFAULT (strftime('%s', 'now')),
+			unblock_time INTEGER,
+			status TEXT DEFAULT 'blocked' CHECK(status IN ('blocked', 'unblocked'))
+		);
+		
+		CREATE TABLE IF NOT EXISTS alerts (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			ip TEXT NOT NULL,
+			sid INTEGER,
+			message TEXT,
+			timestamp INTEGER DEFAULT (strftime('%s', 'now'))
+		);
+		
+		CREATE TABLE IF NOT EXISTS whitelist (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			ip TEXT NOT NULL UNIQUE,
+			description TEXT,
+			added_at INTEGER DEFAULT (strftime('%s', 'now'))
+		);
+		
+		CREATE INDEX IF NOT EXISTS idx_blocked_ips_ip ON blocked_ips(ip);
+		CREATE INDEX IF NOT EXISTS idx_blocked_ips_status ON blocked_ips(status);
+		CREATE INDEX IF NOT EXISTS idx_alerts_ip ON alerts(ip);
+		CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp);
+	`)
 
 	if err != nil {
 		return nil, err
@@ -78,8 +91,12 @@ func New(path string) (*DbManager, error) {
 	return &DbManager{db: db}, nil
 }
 
-func (s *DbManager) AddBlocked(ip, reason string) error {
-	_, err := s.db.Exec(`INSERT INTO blocked_ips (ip, reason) VALUES (?, ?)`, ip, reason)
+// ← ZMIENIONA metoda AddBlocked
+func (s *DbManager) AddBlocked(ip, reason string, score, alertCount, severityScore, uniquePorts, uniqueProtos, uniqueFlows int, categories, details string) error {
+	_, err := s.db.Exec(`
+		INSERT INTO blocked_ips (ip, reason, score, alert_count, severity_score, unique_ports, unique_protos, unique_flows, categories, details) 
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, ip, reason, score, alertCount, severityScore, uniquePorts, uniqueProtos, uniqueFlows, categories, details)
 	return err
 }
 
@@ -88,11 +105,14 @@ func (s *DbManager) AddAlert(ip string, sid int, message string) error {
 	return err
 }
 
+// ← ZMIENIONA metoda GetBlocked
 func (s *DbManager) GetBlocked() ([]BlockedIPDetails, error) {
-	rows, err := s.db.Query(`SELECT ip, timestamp, reason 
-							 FROM blocked_ips 
-							 WHERE status='blocked'
-							 ORDER BY timestamp DESC`)
+	rows, err := s.db.Query(`
+		SELECT ip, reason, score, alert_count, severity_score, unique_ports, unique_protos, unique_flows, categories, details, timestamp 
+		FROM blocked_ips 
+		WHERE status='blocked'
+		ORDER BY timestamp DESC
+	`)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +121,9 @@ func (s *DbManager) GetBlocked() ([]BlockedIPDetails, error) {
 	var ips []BlockedIPDetails
 	for rows.Next() {
 		var ip BlockedIPDetails
-		if err := rows.Scan(&ip.IP, &ip.Timestamp, &ip.Reason); err != nil {
+		if err := rows.Scan(&ip.IP, &ip.Reason, &ip.Score, &ip.AlertCount, &ip.SeverityScore,
+			&ip.UniquePorts, &ip.UniqueProtos, &ip.UniqueFlows,
+			&ip.Categories, &ip.Details, &ip.Timestamp); err != nil {
 			return nil, err
 		}
 		ips = append(ips, ip)
@@ -114,23 +136,22 @@ func (s *DbManager) UnblockIP(ip string) error {
 	now := time.Now().Unix()
 
 	result, err := s.db.Exec(`
-        UPDATE blocked_ips 
-        SET status='unblocked', unblock_time=? 
-        WHERE ip=? AND status='blocked'
-    `, now, ip)
+		UPDATE blocked_ips 
+		SET status='unblocked', unblock_time=? 
+		WHERE ip=? AND status='blocked'
+	`, now, ip)
 
 	if err != nil {
 		return err
 	}
 
-	// Sprawdź czy coś zaktualizowano
 	rows, err := result.RowsAffected()
 	if err != nil {
 		return err
 	}
 
 	if rows == 0 {
-		return sql.ErrNoRows // IP nie było zablokowane
+		return sql.ErrNoRows
 	}
 
 	return nil
@@ -138,10 +159,10 @@ func (s *DbManager) UnblockIP(ip string) error {
 
 func (s *DbManager) IsBlocked(ip string) (bool, error) {
 	row := s.db.QueryRow(`
-        SELECT COUNT(1) 
-        FROM blocked_ips 
-        WHERE ip=? AND status='blocked'
-    `, ip)
+		SELECT COUNT(1) 
+		FROM blocked_ips 
+		WHERE ip=? AND status='blocked'
+	`, ip)
 
 	var count int
 	if err := row.Scan(&count); err != nil {
@@ -151,16 +172,14 @@ func (s *DbManager) IsBlocked(ip string) (bool, error) {
 	return count > 0, nil
 }
 
-// DO SPRAWDZENIA CZY POTRZEBNE
-
 func (s *DbManager) GetAlertsByIP(ip string, limit int) ([]AlertDetails, error) {
 	rows, err := s.db.Query(`
-        SELECT id, ip, sid, message, timestamp
-        FROM alerts
-        WHERE ip=?
-        ORDER BY timestamp DESC
-        LIMIT ?
-    `, ip, limit)
+		SELECT id, ip, sid, message, timestamp
+		FROM alerts
+		WHERE ip=?
+		ORDER BY timestamp DESC
+		LIMIT ?
+	`, ip, limit)
 
 	if err != nil {
 		return nil, err

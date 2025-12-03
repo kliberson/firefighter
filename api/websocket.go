@@ -1,4 +1,3 @@
-// api/websocket.go
 package api
 
 import (
@@ -11,16 +10,34 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-type WebSocketEvent struct {
-	Type      string    `json:"type"`
-	IP        string    `json:"ip"`
-	Reason    string    `json:"reason"`
-	Timestamp time.Time `json:"timestamp"`
+type WebSocketMessage struct {
+	Type      string `json:"type"`
+	IP        string `json:"ip"`
+	Reason    string `json:"reason"`
+	Timestamp int64  `json:"timestamp"`
+
+	// Alerty
+	SID      int    `json:"sid,omitempty"`
+	Category string `json:"category,omitempty"`
+	Severity int    `json:"severity,omitempty"`
+	Protocol string `json:"protocol,omitempty"`
+	SrcPort  int    `json:"src_port,omitempty"`
+	DstPort  int    `json:"dst_port,omitempty"`
+
+	// Blokady
+	Score         int    `json:"score,omitempty"`
+	Details       string `json:"details,omitempty"`
+	AlertCount    int    `json:"alert_count,omitempty"`    // ← DODAJ
+	SeverityScore int    `json:"severity_score,omitempty"` // ← DODAJ
+	UniquePorts   int    `json:"unique_ports,omitempty"`   // ← DODAJ
+	UniqueProtos  int    `json:"unique_protos,omitempty"`  // ← DODAJ
+	UniqueFlows   int    `json:"unique_flows,omitempty"`   // ← DODAJ
+	Categories    string `json:"categories,omitempty"`     // ← DODAJ
 }
 
 type Hub struct {
 	clients    map[*websocket.Conn]bool
-	broadcast  chan WebSocketEvent
+	broadcast  chan WebSocketMessage // ← Zmienione z WebSocketEvent
 	register   chan *websocket.Conn
 	unregister chan *websocket.Conn
 	mu         sync.RWMutex
@@ -31,7 +48,7 @@ var hub *Hub
 func init() {
 	hub = &Hub{
 		clients:    make(map[*websocket.Conn]bool),
-		broadcast:  make(chan WebSocketEvent, 100),
+		broadcast:  make(chan WebSocketMessage, 100), // ← Zmienione
 		register:   make(chan *websocket.Conn),
 		unregister: make(chan *websocket.Conn),
 	}
@@ -39,7 +56,6 @@ func init() {
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
-		// Development: allow all
 		return true
 	},
 }
@@ -67,11 +83,11 @@ func (h *Hub) Run() {
 			}
 			h.mu.Unlock()
 
-		case event := <-h.broadcast:
+		case message := <-h.broadcast: // ← Zmienione z event
 			h.mu.RLock()
-			log.Printf("📡 Broadcasting event: %s to %d clients", event.Type, len(h.clients))
+			log.Printf("📡 Broadcasting %s: %s to %d clients", message.Type, message.IP, len(h.clients))
 			for conn := range h.clients {
-				err := conn.WriteJSON(event)
+				err := conn.WriteJSON(message)
 				if err != nil {
 					log.Printf("❌ Write error: %v", err)
 					h.mu.RUnlock()
@@ -84,22 +100,48 @@ func (h *Hub) Run() {
 	}
 }
 
-func BroadcastBlock(ip, reason string) {
-	hub.broadcast <- WebSocketEvent{
+func BroadcastAlert(ip, signature string, sid, severity, srcPort, dstPort int, protocol, category string) {
+	hub.broadcast <- WebSocketMessage{
+		Type:      "alert",
+		IP:        ip,
+		Reason:    signature,
+		Timestamp: time.Now().Unix(),
+		SID:       sid,
+		Category:  category,
+		Severity:  severity,
+		Protocol:  protocol,
+		SrcPort:   srcPort,
+		DstPort:   dstPort,
+	}
+}
+
+// BroadcastBlock - wysyła blokadę (prostsze, bez dodatkowych danych)
+func BroadcastBlockWithScore(ip, reason string, score, alertCount, severityScore, uniquePorts, uniqueProtos, uniqueFlows int, categories, details string) {
+	hub.broadcast <- WebSocketMessage{
 		Type:      "block",
 		IP:        ip,
 		Reason:    reason,
-		Timestamp: time.Now(),
+		Score:     score,
+		Details:   details,
+		Timestamp: time.Now().Unix(),
+		// ← DODAJ te pola do struktury WebSocketMessage:
+		AlertCount:    alertCount,
+		SeverityScore: severityScore,
+		UniquePorts:   uniquePorts,
+		UniqueProtos:  uniqueProtos,
+		UniqueFlows:   uniqueFlows,
+		Categories:    categories,
 	}
-	log.Printf("📤 Queued block event for %s", ip)
+	log.Printf("📤 Queued block event for %s (score: %d)", ip, score)
 }
 
+// BroadcastUnblock - wysyła odblokowanie
 func BroadcastUnblock(ip string) {
-	hub.broadcast <- WebSocketEvent{
+	hub.broadcast <- WebSocketMessage{
 		Type:      "unblock",
 		IP:        ip,
 		Reason:    "Manually unblocked",
-		Timestamp: time.Now(),
+		Timestamp: time.Now().Unix(),
 	}
 	log.Printf("📤 Queued unblock event for %s", ip)
 }
@@ -116,7 +158,7 @@ func handleWebSocket(c *gin.Context) {
 	log.Println("✅ WebSocket connection established")
 	hub.register <- conn
 
-	// Keep connection alive with pings
+	// Keep-alive ping
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
@@ -131,6 +173,7 @@ func handleWebSocket(c *gin.Context) {
 		hub.unregister <- conn
 	}()
 
+	// Read loop (keep connection open)
 	for {
 		_, _, err := conn.ReadMessage()
 		if err != nil {

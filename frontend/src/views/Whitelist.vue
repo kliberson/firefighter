@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="flex justify-between items-center mb-6">
-      <h1 class="text-3xl font-bold">⚪ Whitelist Management</h1>
+      <h1 class="text-3xl font-bold">Whitelist Management</h1>
       <button 
         @click="showAddModal = true"
         class="bg-green-600 px-4 py-2 rounded hover:bg-green-700"
@@ -64,7 +64,7 @@
           >
             <td class="p-2">{{ item.ip }}</td>
             <td class="p-2 text-gray-400">{{ item.description || 'N/A' }}</td>
-            <td class="p-2 text-gray-400">{{ formatDate(item.added_at) }}</td>
+            <td class="p-2 text-gray-400">{{ formatTimestamp(item.added_at) }}</td>
             <td class="p-2">
               <button 
                 @click="removeFromWhitelist(item.ip)"
@@ -141,9 +141,18 @@ async function removeFromWhitelist(ip) {
   }
 }
 
-function formatDate(timestamp) {
-  if (!timestamp) return 'N/A'
-  return new Date(timestamp * 1000).toLocaleDateString()
+function formatTimestamp(unixTimestamp) {
+  if (!unixTimestamp) return 'N/A'
+  const date = new Date(unixTimestamp * 1000)
+  return date.toLocaleString('en-US', {
+    month: '2-digit',
+    day: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  })
 }
+
 </script>
  

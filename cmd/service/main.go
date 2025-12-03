@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os/exec"
+	"strings"
 	"time"
 
 	api "firefighter/api"
@@ -22,7 +23,7 @@ func main() {
 
 	go api.StartHub()
 
-	//WSTĘPNIE SERVER HTTP
+	// HTTP server
 	r := api.SetupRouter(db)
 
 	go func() {
@@ -52,7 +53,7 @@ func main() {
 
 	fmt.Println("🔥 Firefighter started! Waiting for alerts...")
 
-	wm := suricata.NewWindowManager(25 * time.Second)
+	wm := suricata.NewWindowManager(180 * time.Second)
 
 	// Main loop
 	for alert := range alertChan {
@@ -62,6 +63,17 @@ func main() {
 		if err := db.AddAlert(alert.SrcIP, alert.Alert.SignatureID, alert.Alert.Signature); err != nil {
 			log.Printf("Database error: %v", err)
 		}
+
+		api.BroadcastAlert(
+			alert.SrcIP,             // IP
+			alert.Alert.Signature,   // Reason/Signature
+			alert.Alert.SignatureID, // SID
+			alert.Alert.Severity,    // Severity (1-3)
+			alert.SrcPort,           // Source port
+			alert.DstPort,           // Destination port
+			alert.Proto,             // Protocol (TCP/UDP)
+			alert.Alert.Category,    // Category
+		)
 
 		wm.Add(alert)
 		wm.PrintAll()
@@ -88,15 +100,51 @@ func main() {
 				continue
 			}
 
-			// 4. Zapisz do bazy
-			if err := db.AddBlocked(decision.IP, decision.Reason); err != nil {
+			// 4. Zapisz do bazy z pełnymi danymi
+			categoriesStr := formatCategories(decision.Categories)
+
+			if err := db.AddBlocked(
+				decision.IP,
+				decision.Reason,
+				decision.Score,
+				decision.AlertCount,
+				decision.SeverityScore,
+				decision.UniquePorts,
+				decision.UniqueProtos,
+				decision.UniqueFlows,
+				categoriesStr,
+				decision.Details,
+			); err != nil {
 				log.Printf("Database save failed for %s: %v", decision.IP, err)
 			} else {
-				fmt.Printf("BLOCKED: %s - %s\n", decision.IP, decision.Reason)
+				fmt.Printf("🚫 BLOCKED: %s - %s (Score: %d)\n", decision.IP, decision.Reason, decision.Score)
 
-				//  Wysyłanie alertu do klientów WebSocket
-				api.BroadcastBlock(decision.IP, decision.Reason)
+				api.BroadcastBlockWithScore(
+					decision.IP,
+					decision.Reason,
+					decision.Score,
+					decision.AlertCount,
+					decision.SeverityScore,
+					decision.UniquePorts,
+					decision.UniqueProtos,
+					decision.UniqueFlows,
+					formatCategories(decision.Categories),
+					decision.Details,
+				)
 			}
 		}
 	}
+}
+
+// Helper: konwertuje map[string]int do stringa "Category1:5, Category2:3"
+func formatCategories(cats map[string]int) string {
+	if len(cats) == 0 {
+		return ""
+	}
+
+	var parts []string
+	for cat, count := range cats {
+		parts = append(parts, fmt.Sprintf("%s:%d", cat, count))
+	}
+	return strings.Join(parts, ", ")
 }

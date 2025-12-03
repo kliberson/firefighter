@@ -29,13 +29,3 @@ func (w *SlidingWindow) Add(alert Alert) {
 		w.Events.Remove(w.Events.Front())
 	}
 }
-
-// // DEBUG
-// func (w *SlidingWindow) Print() {
-// 	fmt.Println("Sliding window zawiera", len(w.Events), "alertów:")
-// 	for i, e := range w.Events {
-// 		fmt.Printf("  %d. %s -> %s:%d (%s)\n",
-// 			i+1, e.SrcIP, e.DstIP, e.DstPort, e.Alert.Signature)
-// 	}
-// 	fmt.Println("--------------------------------")
-// }
