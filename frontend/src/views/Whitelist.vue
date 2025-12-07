@@ -1,7 +1,7 @@
 <template>
-  <div>
+  <div class="p-8">
     <div class="flex justify-between items-center mb-6">
-      <h1 class="text-3xl font-bold">Whitelist Management</h1>
+      <h1 class="text-3xl font-semibold">Whitelist Management</h1>
       <button 
         @click="showAddModal = true"
         class="bg-green-600 px-4 py-2 rounded hover:bg-green-700"
@@ -13,7 +13,7 @@
     <!-- Add IP Modal -->
     <div v-if="showAddModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
       <div class="bg-gray-800 rounded-lg p-6 w-96">
-        <h2 class="text-xl font-bold mb-4">Add to Whitelist</h2>
+        <h2 class="text-xl font-semibold mb-4">Add to Whitelist</h2>
         
         <input 
           v-model="newIP" 

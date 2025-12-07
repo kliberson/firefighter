@@ -1,11 +1,80 @@
 <template>
   <div class="p-8">
-    <h1 class="text-4xl font-bold mb-8">Firefighter Dashboard</h1>
+    <h1 class="text-3xl font-semibold mb-6">Dashboard</h1>
     
+    <!-- Compact Stats Cards -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <div class="bg-gradient-to-r from-red-500/20 to-red-600/30 border border-red-500/30 p-4 rounded-xl">
+        <div class="text-2xl font-bold text-red-400 mb-1">{{ stats.total_alerts }}</div>
+        <div class="text-sm text-gray-400">Total Alerts</div>
+      </div>
+      <div class="bg-gradient-to-r from-orange-500/20 to-orange-600/30 border border-orange-500/30 p-4 rounded-xl">
+        <div class="text-2xl font-bold text-orange-400 mb-1">{{ stats.total_blocked }}</div>
+        <div class="text-sm text-gray-400">Blocked IPs</div>
+      </div>
+      <div class="bg-gradient-to-r from-blue-500/20 to-blue-600/30 border border-blue-500/30 p-4 rounded-xl">
+        <div class="text-2xl font-bold text-blue-400 mb-1">{{ stats.unique_ips }}</div>
+        <div class="text-sm text-gray-400">Unique IPs</div>
+      </div>
+      <div class="bg-gradient-to-r from-purple-500/20 to-purple-600/30 border border-purple-500/30 p-4 rounded-xl">
+        <div class="text-2xl font-bold text-purple-400 mb-1">{{ stats.total_alerts > 0 ? Math.round(stats.total_blocked / stats.total_alerts * 100) : 0 }}%</div>
+        <div class="text-sm text-gray-400">Block Rate</div>
+      </div>
+    </div>
+
+    <!-- Alerts Last 24h Chart -->
+    <div class="bg-gray-800 rounded-lg p-6 mb-4">
+      <h3 class="text-xl font-semibold mb-4">Alerts Last 24h</h3>
+      <div class="h-32">
+        <LineChart 
+          v-if="miniChartData && miniChartData.labels" 
+          :data="miniChartData" 
+          :options="miniChartOptions" 
+        />
+        <div v-else class="text-gray-500 text-sm">Loading...</div>
+      </div>
+    </div>
+
+    <!-- Live Alerts Feed -->
+    <div class="bg-gray-800 rounded-lg p-6 mb-6">
+    <h2 class="text-xl font-semibold mb-3">Live Alerts</h2>
+    <div class="space-y-2 max-h-60 overflow-y-auto"> <!-- niższe, ciaśniejsze -->
+      <div 
+        v-for="(alert, index) in liveAlerts.slice(0, 20)" 
+        :key="index"
+        class="bg-gray-700/70 px-3 py-2 rounded flex items-center justify-between text-xs"
+      >
+        <div class="flex flex-col">
+          <span class="font-mono text-yellow-400">{{ alert.ip }}</span>
+          <span class="text-gray-300 truncate max-w-xs">{{ alert.reason }}</span>
+          <div class="flex gap-2 mt-1 text-[10px] text-gray-400">
+            <span v-if="alert.sid">SID: {{ alert.sid }}</span>
+            <span v-if="alert.protocol">{{ alert.protocol }}</span>
+            <span v-if="alert.dst_port">Port: {{ alert.dst_port }}</span>
+            <span v-if="alert.category">{{ alert.category }}</span>
+          </div>
+        </div>
+        <div class="flex flex-col items-end gap-1">
+          <span 
+            v-if="alert.severity" 
+            :class="getSeverityBadge(alert.severity)"
+            class="px-2 py-0.5 rounded text-[10px] font-bold"
+          >
+            {{ getSeverityText(alert.severity) }}
+          </span>
+          <span class="text-gray-400 text-[10px]">{{ formatTime(alert.timestamp) }}</span>
+        </div>
+      </div>
+      <div v-if="liveAlerts.length === 0" class="text-gray-500 text-center py-4 text-sm">
+        Waiting for alerts...
+      </div>
+    </div>
+  </div>
+
     <!-- Main Content: Blocked IPs -->
     <div class="bg-gray-800 rounded-lg p-6 mb-8">
       <div class="flex justify-between items-center mb-6">
-        <h2 class="text-2xl font-bold">Blocked IP Addresses</h2>
+        <h2 class="text-2xl font-semibold">Blocked IP Addresses</h2>
         <button 
           @click="fetchBlockedIPs" 
           class="bg-blue-600 px-4 py-2 rounded hover:bg-blue-700 transition"
@@ -117,52 +186,49 @@
         </button>
       </div>
     </div>
-    
-    <!-- Live Alerts Feed -->
-    <div class="bg-gray-800 rounded-lg p-6">
-      <h2 class="text-2xl font-bold mb-6">Live Alerts</h2>
-      <div class="space-y-3 max-h-96 overflow-y-auto">
-        <div 
-          v-for="(alert, index) in liveAlerts.slice(0, 20)" 
-          :key="index"
-          class="bg-gray-700 p-3 rounded hover:bg-gray-600 transition"
-        >
-          <div class="flex justify-between items-center mb-2">
-            <span class="font-mono text-yellow-400">{{ alert.ip }}</span>
-            <span 
-              v-if="alert.severity" 
-              :class="getSeverityBadge(alert.severity)"
-              class="px-2 py-1 rounded text-xs font-bold"
-            >
-              {{ getSeverityText(alert.severity) }}
-            </span>
-            <span class="text-gray-400 text-xs">{{ formatTime(alert.timestamp) }}</span>
-          </div>
-          
-          <span class="text-gray-300 text-sm mb-2">{{ alert.reason }}</span>
-          
-          <div v-if="alert.sid || alert.protocol" class="flex gap-3 text-xs mt-2">
-            <span v-if="alert.sid" class="text-gray-500">SID: {{ alert.sid }}</span>
-            <span v-if="alert.protocol" class="text-blue-400">{{ alert.protocol }}</span>
-            <span v-if="alert.dst_port" class="text-purple-400">Port: {{ alert.dst_port }}</span>
-            <span v-if="alert.category" class="text-orange-400">{{ alert.category }}</span>
-          </div>
-        </div>
-        <div v-if="liveAlerts.length === 0" class="text-gray-500 text-center py-8">
-          Waiting for alerts...
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted, watch } from 'vue'
+import { Line as LineChart } from 'vue-chartjs'
+import { Chart, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend, Filler } from 'chart.js'
+
+Chart.register(LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend, Filler)
 
 const API_URL = window.location.origin
 const blockedIPs = ref([])
 const liveAlerts = ref([])
 const selectedBlock = ref(null)
+const stats = ref({ total_alerts: 0, total_blocked: 0, unique_ips: 0 })
+const miniChartData = ref({ labels: [], datasets: [] })
+
+const miniChartOptions = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: {
+    legend: { display: false }
+  },
+  scales: {
+    x: {
+      grid: { color: 'rgba(75,85,99,0.2)' },
+      ticks: {
+        color: '#9CA3AF',
+        maxRotation: 0,
+        minRotation: 0,
+        autoSkip: true,
+        callback: (value) => {
+          const raw = miniChartData.value.labels[value] || ''
+          const parts = String(raw).split(' ')
+          return parts.length > 1 ? parts[1] : raw
+        }
+      }
+    }
+  },
+  elements: {
+    point: { radius: 0 }
+  }
+}
 
 const props = defineProps({
   connected: Boolean,
@@ -171,7 +237,39 @@ const props = defineProps({
 
 onMounted(() => {
   fetchBlockedIPs()
+  fetchStats()
+  fetchMiniChart()
 })
+
+async function fetchStats() {
+  try {
+    const res = await fetch(`${API_URL}/api/stats`)
+    stats.value = await res.json()
+  } catch (error) {
+    console.error('Failed to fetch stats:', error)
+  }
+}
+
+async function fetchMiniChart() {
+  try {
+    const res = await fetch(`${API_URL}/api/stats/alerts/buckets?days=1`)
+    const data = await res.json()
+    
+    miniChartData.value = {
+      labels: (data.data || []).map(d => d.bucket),
+      datasets: [{
+        label: 'Alerts',
+        data: (data.data || []).map(d => d.count),
+        borderColor: '#3B82F6',
+        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+        fill: true,
+        tension: 0.3
+      }]
+    }
+  } catch (error) {
+    console.error('Failed to fetch mini chart:', error)
+  }
+}
 
 watch(() => props.alerts, (newAlerts) => {
   if (!newAlerts || newAlerts.length === 0) return
@@ -180,32 +278,41 @@ watch(() => props.alerts, (newAlerts) => {
   const blocks = []
   
   newAlerts.forEach(event => {
+    // Backend wysyła "alert", "block", "unblock" w polu type
     if (event.type === 'alert') {
       alerts.push(event)
     } else if (event.type === 'block') {
       blocks.push(event)
+    } else if (event.type === 'unblock') {
+      // Obsługa live unblock (opcjonalnie - usuwanie z listy)
+      blockedIPs.value = blockedIPs.value.filter(item => item.ip !== event.ip)
     }
   })
   
-  liveAlerts.value = alerts.slice(0, 50)
+  // Aktualizacja Live Alerts
+  if (alerts.length > 0) {
+    // Dodajemy nowe na początek i przycinamy do 50
+    liveAlerts.value = [...alerts, ...liveAlerts.value].slice(0, 50)
+  }
   
- blocks.forEach(block => {
-  const exists = blockedIPs.value.find(ip => ip.ip === block.ip)
-  if (!exists) {
+  blocks.forEach(block => {
+    // Usuń stary wpis (jeśli istnieje)
+    blockedIPs.value = blockedIPs.value.filter(item => item.ip !== block.ip)
+    
+    // Dodaj nowy na początku
     blockedIPs.value.unshift({
       ip: block.ip,
       reason: block.reason,
       score: block.score,
-      alert_count: block.alert_count || 0,          // ← TUTAJ
-      severity_score: block.severity_score || 0,    // ← I TUTAJ
-      unique_ports: block.unique_ports || 0,
-      unique_protos: block.unique_protos || 0,
-      unique_flows: block.unique_flows || 0,
-      categories: block.categories || '',
+      alert_count: block.alert_count,
+      severity_score: block.severity_score,
+      unique_ports: block.unique_ports,
+      unique_protos: block.unique_protos,
+      unique_flows: block.unique_flows,
+      categories: block.categories,
       details: block.details,
-      timestamp: block.timestamp
-    })
-  }
+      timestamp: block.timestamp,
+  })
 })
 }, { immediate: true, deep: true })
 
@@ -282,3 +389,11 @@ function formatTimestamp(unixTimestamp) {
   })
 }
 </script>
+
+<style scoped>
+.chart-container {
+  position: relative;
+  height: 250px;
+  width: 100%;
+}
+</style>

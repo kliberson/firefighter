@@ -1,7 +1,7 @@
 <template>
   <div class="flex h-screen bg-gray-900 text-white">
     <!-- Sidebar -->
-    <aside class="w-64 bg-gray-800 border-r border-gray-700 flex flex-col">
+    <aside class="w-45 bg-gray-800 border-r border-gray-700 flex flex-col">
       <div class="p-6 border-b border-gray-700">
         <h1 class="text-2xl font-bold">Firefighter</h1>
         <p class="text-sm text-gray-400 mt-1">IPS/IDS Dashboard</p>
@@ -16,7 +16,16 @@
           <span class="text-xl"></span>
           <span class="font-medium">Dashboard</span>
         </router-link>
-        
+
+        <router-link 
+          to="/analytics" 
+          class="flex items-center gap-3 px-4 py-3 rounded-lg transition-colors"
+          :class="$route.path === '/analytics' ? 'bg-blue-600' : 'hover:bg-gray-700'"
+        >
+          <span class="text-xl"></span>
+          <span class="font-medium">Analytics</span>
+        </router-link>
+
         <router-link 
           to="/whitelist" 
           class="flex items-center gap-3 px-4 py-3 rounded-lg transition-colors"
