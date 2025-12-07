@@ -5,6 +5,12 @@ import (
 	"time"
 )
 
+// Manages multiple SlidingWindows by source IP
+type WindowManager struct {
+	Duration time.Duration
+	Windows  map[string]*SlidingWindow
+}
+
 // Creating new WindowManager
 func NewWindowManager(duration time.Duration) *WindowManager {
 	return &WindowManager{

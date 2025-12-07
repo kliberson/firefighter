@@ -24,6 +24,13 @@ func SetupRouter(db *data.DbManager) *gin.Engine {
 		apiGroup.GET("/whitelist", getWhitelisted(db))
 		apiGroup.POST("/whitelist/:ip", addToWhitelist(db))
 		apiGroup.DELETE("/whitelist/:ip", removeFromWhitelist(db))
+		apiGroup.GET("/stats", getStats(db))
+		apiGroup.GET("/stats/hourly", getHourlyAlerts(db))
+		apiGroup.GET("/stats/top_ips", getTopIPs(db))
+		apiGroup.GET("/stats/categories", getAlertCategories(db))
+		apiGroup.GET("/stats/recent_alerts", getRecentAlerts(db))
+		apiGroup.GET("/stats/alerts/buckets", getAlertBuckets(db))
+		apiGroup.GET("/stats/blocks/buckets", getBlockBuckets(db))
 	}
 
 	r.GET("/ws", handleWebSocket)

@@ -3,6 +3,7 @@ package api
 import (
 	suricata "firefighter/core"
 	"firefighter/data"
+	"log"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -10,11 +11,14 @@ import (
 
 func getBlocked(db *data.DbManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		log.Printf("🔍 DEBUG: Calling GetBlocked()...")
 		ips, err := db.GetBlocked()
 		if err != nil {
-			c.JSON(500, gin.H{"error": "Failed to retrieve blocked IPs"})
+			log.Printf("💥 ERROR GetBlocked: %v", err) // ← TO POKAŻE BŁĄD!
+			c.JSON(500, gin.H{"error": err.Error()})
 			return
 		}
+		log.Printf("✅ GetBlocked returned %d IPs", len(ips))
 		c.JSON(200, gin.H{"blocked_ips": ips})
 	}
 }
@@ -110,5 +114,101 @@ func removeFromWhitelist(db *data.DbManager) gin.HandlerFunc {
 			return
 		}
 		c.JSON(200, gin.H{"status": "IP removed from whitelist"})
+	}
+}
+
+func getStats(db *data.DbManager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		stats, err := db.GetStats()
+		if err != nil {
+			c.JSON(500, gin.H{"error": "Failed to retrieve stats"})
+			return
+		}
+		c.JSON(200, stats)
+	}
+}
+
+func getHourlyAlerts(db *data.DbManager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		daysStr := c.DefaultQuery("days", "7")
+		days, _ := strconv.Atoi(daysStr)
+		data, err := db.GetHourlyAlerts(days)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "Failed to retrieve hourly data"})
+			return
+		}
+		c.JSON(200, gin.H{"data": data})
+	}
+}
+
+func getTopIPs(db *data.DbManager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		limitStr := c.DefaultQuery("limit", "10")
+		limit, _ := strconv.Atoi(limitStr)
+		data, err := db.GetTopIPs(limit)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "Failed to retrieve top IPs"})
+			return
+		}
+		c.JSON(200, gin.H{"data": data})
+	}
+}
+
+func getAlertCategories(db *data.DbManager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		daysStr := c.DefaultQuery("days", "7")
+		days, _ := strconv.Atoi(daysStr)
+		data, err := db.GetAlertCategories(days)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "Failed to retrieve categories"})
+			return
+		}
+		c.JSON(200, gin.H{"data": data})
+	}
+}
+
+func getRecentAlerts(db *data.DbManager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		limitStr := c.DefaultQuery("limit", "100")
+		limit, err := strconv.Atoi(limitStr)
+		if err != nil {
+			c.JSON(400, gin.H{"error": "Invalid limit"})
+			return
+		}
+
+		alerts, err := db.GetRecentAlerts(limit)
+		if err != nil {
+			log.Printf("💥 GetRecentAlerts error: %v", err) // <-- to jest kluczowe
+			c.JSON(500, gin.H{"error": "Failed to retrieve recent alerts"})
+			return
+		}
+
+		c.JSON(200, gin.H{"alerts": alerts})
+	}
+}
+
+func getAlertBuckets(db *data.DbManager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		daysStr := c.DefaultQuery("days", "7")
+		days, _ := strconv.Atoi(daysStr)
+		data, err := db.GetAlertBuckets(days)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "Failed to retrieve alert buckets"})
+			return
+		}
+		c.JSON(200, gin.H{"data": data})
+	}
+}
+
+func getBlockBuckets(db *data.DbManager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		daysStr := c.DefaultQuery("days", "7")
+		days, _ := strconv.Atoi(daysStr)
+		data, err := db.GetBlockBuckets(days)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "Failed to retrieve block buckets"})
+			return
+		}
+		c.JSON(200, gin.H{"data": data})
 	}
 }

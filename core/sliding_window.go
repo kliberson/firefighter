@@ -5,6 +5,12 @@ import (
 	"time"
 )
 
+// Last alerts from SlidingWindow
+type SlidingWindow struct {
+	Duration time.Duration
+	Events   *list.List
+}
+
 func NewSlidingWindow(duration time.Duration) *SlidingWindow {
 	return &SlidingWindow{
 		Duration: duration,

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 
@@ -137,14 +138,24 @@ func main() {
 }
 
 // Helper: konwertuje map[string]int do stringa "Category1:5, Category2:3"
+type catPair struct {
+	name  string
+	count int
+}
+
 func formatCategories(cats map[string]int) string {
-	if len(cats) == 0 {
-		return ""
+	var pairs []catPair
+	for name, count := range cats {
+		pairs = append(pairs, catPair{name, count})
 	}
 
+	sort.Slice(pairs, func(i, j int) bool {
+		return pairs[i].count > pairs[j].count
+	})
+
 	var parts []string
-	for cat, count := range cats {
-		parts = append(parts, fmt.Sprintf("%s:%d", cat, count))
+	for _, p := range pairs {
+		parts = append(parts, fmt.Sprintf("%s:%d", p.name, p.count))
 	}
 	return strings.Join(parts, ", ")
 }

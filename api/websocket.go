@@ -25,14 +25,14 @@ type WebSocketMessage struct {
 	DstPort  int    `json:"dst_port,omitempty"`
 
 	// Blokady
-	Score         int    `json:"score,omitempty"`
-	Details       string `json:"details,omitempty"`
-	AlertCount    int    `json:"alert_count,omitempty"`    // ← DODAJ
-	SeverityScore int    `json:"severity_score,omitempty"` // ← DODAJ
-	UniquePorts   int    `json:"unique_ports,omitempty"`   // ← DODAJ
-	UniqueProtos  int    `json:"unique_protos,omitempty"`  // ← DODAJ
-	UniqueFlows   int    `json:"unique_flows,omitempty"`   // ← DODAJ
-	Categories    string `json:"categories,omitempty"`     // ← DODAJ
+	Score         int    `json:"score"`
+	Details       string `json:"details"`
+	AlertCount    int    `json:"alert_count"`    // ← DODAJ
+	SeverityScore int    `json:"severity_score"` // ← DODAJ
+	UniquePorts   int    `json:"unique_ports"`   // ← DODAJ
+	UniqueProtos  int    `json:"unique_protos"`  // ← DODAJ
+	UniqueFlows   int    `json:"unique_flows"`   // ← DODAJ
+	Categories    string `json:"categories"`     // ← DODAJ
 }
 
 type Hub struct {

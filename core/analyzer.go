@@ -24,6 +24,12 @@ func (wm *WindowManager) AnalyzeAlerts(db *data.DbManager) []BlockDecision {
 	baseThreshold := 30
 
 	for ip, window := range wm.Windows {
+		// Cleanup pustych okien
+		if window.Events.Len() == 0 {
+			delete(wm.Windows, ip)
+			continue
+		}
+
 		stats := struct {
 			Count         int
 			SeverityScore int
