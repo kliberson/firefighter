@@ -4,7 +4,7 @@
       <h1 class="text-3xl font-semibold">Whitelist Management</h1>
       <button 
         @click="showAddModal = true"
-        class="bg-green-600 px-4 py-2 rounded hover:bg-green-700"
+        class="bg-blue-600 px-4 py-2 rounded hover:bg-blue-700"
       >
         + Add IP
       </button>
@@ -12,7 +12,7 @@
     
     <!-- Add IP Modal -->
     <div v-if="showAddModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-      <div class="bg-gray-800 rounded-lg p-6 w-96">
+      <div class="bg-gray-800 rounded-lg p-6 w-96" >
         <h2 class="text-xl font-semibold mb-4">Add to Whitelist</h2>
         
         <input 
@@ -46,7 +46,7 @@
     </div>
     
     <!-- Whitelist Table -->
-    <div class="bg-gray-800 rounded-lg p-6">
+    <div class="bg-gray-800 rounded-lg p-6 border border-gray-700 rounded-xl p-6">
       <table class="w-full">
         <thead>
           <tr class="border-b border-gray-700">
@@ -82,8 +82,9 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import api from '@/services/api'
+import { formatTimestamp } from '@/utils/dateHelpers'
 
-const API_URL = window.location.origin
 const whitelistedIPs = ref([])
 const showAddModal = ref(false)
 const newIP = ref('')
@@ -95,8 +96,7 @@ onMounted(() => {
 
 async function fetchWhitelist() {
   try {
-    const res = await fetch(`${API_URL}/api/whitelist`)
-    const data = await res.json()
+    const data = await api.getWhitelist()
     whitelistedIPs.value = data.whitelisted_ips || []
   } catch (error) {
     console.error('Failed to fetch whitelist:', error)
@@ -105,14 +105,7 @@ async function fetchWhitelist() {
 
 async function addToWhitelist() {
   try {
-    const res = await fetch(`${API_URL}/api/whitelist/${newIP.value}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        ip: newIP.value,
-        description: newDescription.value 
-      })
-    })
+    const res = await api.addToWhitelist(newIP.value, newDescription.value)
     
     if (res.ok) {
       showAddModal.value = false
@@ -129,9 +122,7 @@ async function removeFromWhitelist(ip) {
   if (!confirm(`Remove ${ip} from whitelist?`)) return
   
   try {
-    const res = await fetch(`${API_URL}/api/whitelist/${ip}`, {
-      method: 'DELETE'
-    })
+    const res = await api.removeFromWhitelist(ip)
     
     if (res.ok) {
       fetchWhitelist()
@@ -140,19 +131,6 @@ async function removeFromWhitelist(ip) {
     console.error('Failed to remove from whitelist:', error)
   }
 }
-
-function formatTimestamp(unixTimestamp) {
-  if (!unixTimestamp) return 'N/A'
-  const date = new Date(unixTimestamp * 1000)
-  return date.toLocaleString('en-US', {
-    month: '2-digit',
-    day: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  })
-}
-
 </script>
+
  

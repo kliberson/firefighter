@@ -5,6 +5,12 @@ import (
 	"time"
 )
 
+// Last alerts from SlidingWindow
+type SlidingWindow struct {
+	Duration time.Duration
+	Events   *list.List
+}
+
 func NewSlidingWindow(duration time.Duration) *SlidingWindow {
 	return &SlidingWindow{
 		Duration: duration,
@@ -16,6 +22,10 @@ func NewSlidingWindow(duration time.Duration) *SlidingWindow {
 func (w *SlidingWindow) Add(alert Alert) {
 	// add new alert
 	w.Events.PushBack(alert)
+
+	if w.Events.Len() > 200 {
+		w.Events.Remove(w.Events.Front())
+	}
 
 	// cutoff = current time - window duration
 	cutoff := time.Now().Add(-w.Duration)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"os"
 	"strings"
@@ -14,28 +15,30 @@ import (
 const SuricataSocketPath = "/var/run/suricata/eve.sock"
 
 func StartServer(socketPath string, out chan<- Alert) error {
-	// Usuń stary socket
+
 	os.Remove(socketPath)
 
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
-		return fmt.Errorf("nie mogę utworzyć Unix socket: %w", err)
+		return fmt.Errorf("Cannot create Unix Socket server: %w", err)
 	}
+
 	defer listener.Close()
 	defer os.Remove(socketPath)
 
 	if err := os.Chmod(socketPath, 0666); err != nil {
-		log.Printf("Ostrzeżenie: Nie można ustawić uprawnień socketu: %v", err)
+		slog.Warn("Cannot set socket permissions", "error", err)
 	}
 
-	fmt.Printf("[Suricata] Serwer nasłuchuje na %s\n", socketPath)
+	slog.Info("Listening on Unix socket", "path", socketPath)
 
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			return fmt.Errorf("błąd akceptowania połączenia: %w", err)
+			slog.Error("Socket accept failed", "error", err)
 		}
-		fmt.Println("[Suricata] Suricata połączona!")
+		slog.Info("Suricata connected")
+
 		go handleConnection(conn, out)
 	}
 }
@@ -43,6 +46,7 @@ func StartServer(socketPath string, out chan<- Alert) error {
 // Parsing alerts and sending to unix socket channel
 func handleConnection(conn net.Conn, out chan<- Alert) {
 	defer conn.Close()
+	defer slog.Warn("Suricata disconnected") // ← DODANE
 
 	scanner := bufio.NewScanner(conn)
 	alertCount := 0
@@ -64,7 +68,6 @@ func handleConnection(conn net.Conn, out chan<- Alert) {
 			if err == nil {
 				alert.ParsedTime = parsed
 			} else {
-				// fallback: jeśli parsing się nie uda, ustaw teraz
 				alert.ParsedTime = time.Now()
 			}
 		} else {
@@ -80,6 +83,7 @@ func handleConnection(conn net.Conn, out chan<- Alert) {
 		out <- alert
 	}
 	if err := scanner.Err(); err != nil {
+		slog.Error("Socket read error", "error", err) // ← DODANE
 		log.Printf("[Suricata] Błąd czytania ze socketu: %v", err)
 	}
 }

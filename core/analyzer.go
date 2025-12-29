@@ -19,11 +19,17 @@ type BlockDecision struct {
 	Categories    map[string]int
 }
 
-func (wm *WindowManager) AnalyzeAlerts(db *data.DbManager) []BlockDecision {
+func (wm *WindowManager) AnalyzeAlerts(db data.Repository) []BlockDecision {
 	var decisions []BlockDecision
 	baseThreshold := 30
 
 	for ip, window := range wm.Windows {
+		// Cleanup pustych okien
+		if window.Events.Len() == 0 {
+			delete(wm.Windows, ip)
+			continue
+		}
+
 		stats := struct {
 			Count         int
 			SeverityScore int
@@ -83,8 +89,8 @@ func (wm *WindowManager) AnalyzeAlerts(db *data.DbManager) []BlockDecision {
 
 		// Tworzenie szczegółowego raportu
 		reason := fmt.Sprintf(
-			"Score:%d, Severity:%d, Categories:%v, Ports:%d, Protos:%d, SIDs:%d, Flows:%d, Count:%d",
-			score, stats.SeverityScore, stats.Categories, len(stats.UniquePorts),
+			"Score:%d, Severity:%d, Ports:%d, Protos:%d, SIDs:%d, Flows:%d, Count:%d",
+			score, stats.SeverityScore, len(stats.UniquePorts),
 			len(stats.UniqueProtos), len(stats.UniqueSIDs), flowCount, stats.Count,
 		)
 

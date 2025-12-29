@@ -5,6 +5,12 @@ import (
 	"time"
 )
 
+// Manages multiple SlidingWindows by source IP
+type WindowManager struct {
+	Duration time.Duration
+	Windows  map[string]*SlidingWindow
+}
+
 // Creating new WindowManager
 func NewWindowManager(duration time.Duration) *WindowManager {
 	return &WindowManager{
@@ -20,6 +26,11 @@ func (wm *WindowManager) Add(alert Alert) {
 		wm.Windows[ip] = NewSlidingWindow(wm.Duration)
 	}
 	wm.Windows[ip].Add(alert)
+}
+
+func (wm *WindowManager) RemoveIP(ip string) {
+	delete(wm.Windows, ip)
+	fmt.Printf("🧹 Wyczyszczono sliding window dla %s\n", ip)
 }
 
 // Print all windows (for debugging)
