@@ -6,7 +6,8 @@ type Repository interface {
 	GetRecentAlerts(limit int) ([]AlertDetails, error)
 	GetAlertBuckets(days int) ([]TimeBucket, error)
 
-	AddBlocked(ip, reason string, score, alertCount, severityScore, uniquePorts, uniqueProtos, uniqueFlows int, categories, details string) error
+	AddBlocked(ip, reason string, score, alertCount, severityScore,
+		uniquePorts, uniqueProtos, uniqueFlows int, categories, details string) error
 	GetBlocked() ([]BlockedIPDetails, error)
 	GetBlockedByIP(ip string) ([]BlockedIPDetails, error)
 	UnblockIP(ip string) error
@@ -24,6 +25,7 @@ type Repository interface {
 	GetAlertCategories(days int) ([]Category, error)
 
 	GetActivity(search string, typeFilter string, limit int) ([]ActivityEntry, error)
+	LogActivity(activityType, ip, details, extra string) error
 
 	Close() error
 }

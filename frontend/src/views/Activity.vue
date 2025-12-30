@@ -20,6 +20,7 @@
                 <option value="block">Blocks</option>
                 <option value="unblock">Unblocks</option>
                 <option value="whitelist_add">Whitelist Add</option>
+                <option value="whitelist_remove">Whitelist Remove</option>
             </select>
 
             <input

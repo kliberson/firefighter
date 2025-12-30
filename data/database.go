@@ -3,7 +3,6 @@ package data
 import (
 	"database/sql"
 	"fmt"
-	"sort"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -111,13 +110,26 @@ func New(path string) (Repository, error) {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ip TEXT NOT NULL UNIQUE,
             description TEXT,
-            added_at INTEGER DEFAULT (strftime('%s', 'now'))
+            added_at INTEGER DEFAULT (strftime('%s', 'now')),
+            removed_at INTEGER DEFAULT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS activity_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT NOT NULL,
+            ip TEXT NOT NULL,
+            details TEXT,
+            extra TEXT,
+            timestamp INTEGER DEFAULT (strftime('%s', 'now'))
         );
         
         CREATE INDEX IF NOT EXISTS idx_blocked_ips_ip ON blocked_ips(ip);
         CREATE INDEX IF NOT EXISTS idx_blocked_ips_status ON blocked_ips(status);
         CREATE INDEX IF NOT EXISTS idx_alerts_ip ON alerts(ip);
         CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_activity_type ON activity_log(type);
+        CREATE INDEX IF NOT EXISTS idx_activity_ip ON activity_log(ip);
+        CREATE INDEX IF NOT EXISTS idx_activity_timestamp ON activity_log(timestamp);
     `)
 
 	if err != nil {
@@ -132,12 +144,27 @@ func (s *DbManager) AddBlocked(ip, reason string, score, alertCount, severitySco
         INSERT INTO blocked_ips (ip, reason, score, alert_count, severity_score, unique_ports, unique_protos, unique_flows, categories, details) 
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, ip, reason, score, alertCount, severityScore, uniquePorts, uniqueProtos, uniqueFlows, categories, details)
-	return err
+
+	if err != nil {
+		return err
+	}
+
+	// ⬇️ DODAJ LOG
+	_ = s.LogActivity("block", ip, reason, fmt.Sprintf("%d", score))
+
+	return nil
 }
 
 func (s *DbManager) AddAlert(ip string, sid int, message string) error {
 	_, err := s.db.Exec(`INSERT INTO alerts (ip, sid, message) VALUES (?, ?, ?)`, ip, sid, message)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// ⬇️ DODAJ LOG
+	_ = s.LogActivity("alert", ip, message, fmt.Sprintf("%d", sid))
+
+	return nil
 }
 
 func (s *DbManager) GetBlocked() ([]BlockedIPDetails, error) {
@@ -169,6 +196,10 @@ func (s *DbManager) GetBlocked() ([]BlockedIPDetails, error) {
 func (s *DbManager) UnblockIP(ip string) error {
 	now := time.Now().Unix()
 
+	// ⬇️ Pobierz reason przed update
+	var reason string
+	s.db.QueryRow("SELECT reason FROM blocked_ips WHERE ip = ? AND status='blocked' LIMIT 1", ip).Scan(&reason)
+
 	result, err := s.db.Exec(`
         UPDATE blocked_ips 
         SET status='unblocked', unblock_time=? 
@@ -187,6 +218,9 @@ func (s *DbManager) UnblockIP(ip string) error {
 	if rows == 0 {
 		return sql.ErrNoRows
 	}
+
+	// ⬇️ DODAJ LOG
+	_ = s.LogActivity("unblock", ip, reason, "")
 
 	return nil
 }
@@ -267,17 +301,61 @@ func (s *DbManager) GetBlockedByIP(ip string) ([]BlockedIPDetails, error) {
 }
 
 func (s *DbManager) AddToWhitelist(ip, description string) error {
-	_, err := s.db.Exec(`INSERT OR IGNORE INTO whitelist (ip, description) VALUES (?, ?)`, ip, description)
-	return err
+	// Sprawdź czy IP był wcześniej
+	var existingID int
+	err := s.db.QueryRow(`SELECT id FROM whitelist WHERE ip = ?`, ip).Scan(&existingID)
+
+	if err == sql.ErrNoRows {
+		// Nowy wpis
+		_, err = s.db.Exec(`INSERT INTO whitelist (ip, description) VALUES (?, ?)`, ip, description)
+		if err != nil {
+			return err
+		}
+	} else {
+		// IP istnieje - reaktywuj
+		_, err = s.db.Exec(`
+            UPDATE whitelist 
+            SET removed_at = NULL, description = ?, added_at = strftime('%s', 'now')
+            WHERE ip = ?
+        `, description, ip)
+		if err != nil {
+			return err
+		}
+	}
+
+	// ⬇️ DODAJ LOG
+	_ = s.LogActivity("whitelist_add", ip, description, "")
+
+	return nil
 }
 
 func (s *DbManager) RemoveFromWhitelist(ip string) error {
-	_, err := s.db.Exec(`DELETE FROM whitelist WHERE ip = ?`, ip)
-	return err
+	// ⬇️ Pobierz description przed soft-delete
+	var description string
+	s.db.QueryRow("SELECT description FROM whitelist WHERE ip = ? AND removed_at IS NULL", ip).Scan(&description)
+
+	_, err := s.db.Exec(`
+        UPDATE whitelist 
+        SET removed_at = strftime('%s', 'now')
+        WHERE ip = ? AND removed_at IS NULL
+    `, ip)
+
+	if err != nil {
+		return err
+	}
+
+	// ⬇️ DODAJ LOG
+	_ = s.LogActivity("whitelist_remove", ip, description, "")
+
+	return nil
 }
 
 func (s *DbManager) IsWhitelisted(ip string) (bool, error) {
-	row := s.db.QueryRow(`SELECT COUNT(1) FROM whitelist WHERE ip = ?`, ip)
+	row := s.db.QueryRow(`
+        SELECT COUNT(1) 
+        FROM whitelist 
+        WHERE ip = ? AND removed_at IS NULL
+    `, ip)
 	var count int
 	if err := row.Scan(&count); err != nil {
 		return false, err
@@ -286,7 +364,12 @@ func (s *DbManager) IsWhitelisted(ip string) (bool, error) {
 }
 
 func (s *DbManager) GetWhitelistDetails() ([]WhitelistDetails, error) {
-	rows, err := s.db.Query(`SELECT ip, description, added_at FROM whitelist ORDER BY added_at DESC`)
+	rows, err := s.db.Query(`
+        SELECT ip, description, added_at 
+        FROM whitelist 
+        WHERE removed_at IS NULL
+        ORDER BY added_at DESC
+    `)
 	if err != nil {
 		return nil, err
 	}
@@ -504,121 +587,47 @@ func (s *DbManager) GetBlockBuckets(days int) ([]TimeBucket, error) {
 }
 
 func (s *DbManager) GetActivity(search string, typeFilter string, limit int) ([]ActivityEntry, error) {
+	query := "SELECT type, timestamp, ip, details, extra FROM activity_log WHERE 1=1"
+	args := []interface{}{}
+
+	if typeFilter != "" {
+		query += " AND type = ?"
+		args = append(args, typeFilter)
+	}
+
+	if search != "" {
+		query += " AND (ip LIKE ? OR details LIKE ?)"
+		searchPattern := "%" + search + "%"
+		args = append(args, searchPattern, searchPattern)
+	}
+
+	query += " ORDER BY timestamp DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
 	var entries []ActivityEntry
-
-	// 1. Alerty (tylko jeśli typeFilter="" lub "alert")
-	if typeFilter == "" || typeFilter == "alert" {
-		alertQuery := "SELECT timestamp, ip, message, CAST(sid AS TEXT) FROM alerts WHERE 1=1"
-		alertArgs := []interface{}{}
-
-		if search != "" {
-			alertQuery += " AND (ip LIKE ? OR message LIKE ?)"
-			searchPattern := "%" + search + "%"
-			alertArgs = append(alertArgs, searchPattern, searchPattern)
-		}
-
-		alertQuery += " ORDER BY timestamp DESC LIMIT ?"
-		alertArgs = append(alertArgs, limit)
-
-		alertRows, err := s.db.Query(alertQuery, alertArgs...)
-		if err != nil {
+	for rows.Next() {
+		var entry ActivityEntry
+		if err := rows.Scan(&entry.Type, &entry.Timestamp, &entry.IP, &entry.Details, &entry.Extra); err != nil {
 			return nil, err
 		}
-		defer alertRows.Close()
-
-		for alertRows.Next() {
-			var entry ActivityEntry
-			entry.Type = "alert"
-			if err := alertRows.Scan(&entry.Timestamp, &entry.IP, &entry.Details, &entry.Extra); err != nil {
-				return nil, err
-			}
-			entries = append(entries, entry)
-		}
+		entries = append(entries, entry)
 	}
 
-	// 2. Blokady (jeśli typeFilter="" lub "block" lub "unblock")
-	if typeFilter == "" || typeFilter == "block" || typeFilter == "unblock" {
-		blockQuery := "SELECT timestamp, ip, reason, CAST(score AS TEXT), status FROM blocked_ips WHERE 1=1"
-		blockArgs := []interface{}{}
+	return entries, rows.Err()
+}
 
-		switch typeFilter {
-		case "block":
-			blockQuery += " AND status='blocked'"
-		case "unblock":
-			blockQuery += " AND status='unblocked'"
-		}
-
-		if search != "" {
-			blockQuery += " AND (ip LIKE ? OR reason LIKE ?)"
-			searchPattern := "%" + search + "%"
-			blockArgs = append(blockArgs, searchPattern, searchPattern)
-		}
-
-		blockQuery += " ORDER BY timestamp DESC LIMIT ?"
-		blockArgs = append(blockArgs, limit)
-
-		blockRows, err := s.db.Query(blockQuery, blockArgs...)
-		if err != nil {
-			return nil, err
-		}
-		defer blockRows.Close()
-
-		for blockRows.Next() {
-			var entry ActivityEntry
-			var status string
-			if err := blockRows.Scan(&entry.Timestamp, &entry.IP, &entry.Details, &entry.Extra, &status); err != nil {
-				return nil, err
-			}
-			if status == "blocked" {
-				entry.Type = "block"
-			} else {
-				entry.Type = "unblock"
-			}
-			entries = append(entries, entry)
-		}
-	}
-
-	// 3. Whitelist (tylko jeśli typeFilter="" lub "whitelist_add")
-	if typeFilter == "" || typeFilter == "whitelist_add" {
-		wlQuery := "SELECT added_at, ip, description FROM whitelist WHERE 1=1"
-		wlArgs := []interface{}{}
-
-		if search != "" {
-			wlQuery += " AND (ip LIKE ? OR description LIKE ?)"
-			searchPattern := "%" + search + "%"
-			wlArgs = append(wlArgs, searchPattern, searchPattern)
-		}
-
-		wlQuery += " ORDER BY added_at DESC LIMIT ?"
-		wlArgs = append(wlArgs, limit)
-
-		wlRows, err := s.db.Query(wlQuery, wlArgs...)
-		if err != nil {
-			return nil, err
-		}
-		defer wlRows.Close()
-
-		for wlRows.Next() {
-			var entry ActivityEntry
-			entry.Type = "whitelist_add"
-			entry.Extra = ""
-			if err := wlRows.Scan(&entry.Timestamp, &entry.IP, &entry.Details); err != nil {
-				return nil, err
-			}
-			entries = append(entries, entry)
-		}
-	}
-
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Timestamp > entries[j].Timestamp
-	})
-
-	// Ogranicz do limitu (bo teraz mamy więcej niż limit)
-	if len(entries) > limit {
-		entries = entries[:limit]
-	}
-
-	return entries, nil
+func (s *DbManager) LogActivity(activityType, ip, details, extra string) error {
+	_, err := s.db.Exec(`
+        INSERT INTO activity_log (type, ip, details, extra) 
+        VALUES (?, ?, ?, ?)
+    `, activityType, ip, details, extra)
+	return err
 }
 
 func (s *DbManager) Close() error {
